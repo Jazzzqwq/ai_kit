@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head><meta charset="utf-8"><title>el-message-box fixture</title></head>
+<body>
+  <!-- Element Plus 真实结构: body > .el-message-box__wrapper > .el-message-box -->
+  <!-- 坏定位器 "body > div.el-message-box" 会失败 (中间隔了 wrapper) -->
+  <div class="el-message-box__wrapper">
+    <div class="el-message-box" data-eval-target="mb_root">
+      <div class="el-message-box__header">
+        <div class="el-message-box__title">提示</div>
+        <!-- 右上角关闭按钮: 供 L2 意图"关闭" 的 .el-message-box__headerbtn 候选命中 -->
+        <button class="el-message-box__headerbtn" data-eval-target="mb_close"><i class="el-message-box__close"></i></button>
+      </div>
+      <div class="el-message-box__content">确定要删除该记录吗？</div>
+      <div class="el-message-box__btns">
+        <button class="el-button el-button--default" data-eval-target="mb_cancel"><span>取消</span></button>
+        <!-- 删除确认按钮是 danger 红色, 不是 primary; 文本"确定"供 L3 xpath 命中 -->
+        <button class="el-button el-button--danger" data-eval-target="del_btn"><span>确定</span></button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

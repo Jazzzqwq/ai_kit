@@ -1,0 +1,55 @@
+{
+  "_comment": "生成黄金集: 页面 DOM 摘要(page_structure) + PO 方法签名 -> 应覆盖用例。page_structure/po_methods 自带, 评测不爬真实网站/不 import pages, 可移植。expected_categories/expected_keywords 用于覆盖率召回。--llm 才产出真实用例; 无 --llm 走 _minimal_plan 骨架仅验证编译/去重管道。",
+  "cases": [
+    {
+      "id": "G1_user_management",
+      "page_name": "用户管理",
+      "po_module": "user_management_page",
+      "po_class": "UserManagementPage",
+      "fixture_name": "user_management_page",
+      "po_methods": "  def add_user(username, password, phone):\n  def query_by_username(username):\n  def edit_user(username, new_phone):\n  def delete_user(username):\n  def reset_filters():\n  def export_all():\n  def find_row_by_username(username):\n  def batch_cleanup(prefixes):",
+      "page_structure": {
+        "title": "用户管理",
+        "inputs": [
+          {"name": "username", "placeholder": "用户名", "type": "text", "required": true},
+          {"name": "password", "placeholder": "密码", "type": "password", "required": true},
+          {"name": "phone", "placeholder": "手机号", "type": "text", "required": false}
+        ],
+        "buttons": [
+          {"text": "新增", "class": "el-button--primary"},
+          {"text": "查询", "class": "el-button"},
+          {"text": "重置", "class": "el-button"},
+          {"text": "导出", "class": "el-button"}
+        ],
+        "tables": [{"class": "el-table", "headers": ["用户名", "手机号", "状态", "操作"]}],
+        "selects": []
+      },
+      "expected_categories": ["add", "query", "edit", "delete", "reset", "export"],
+      "expected_keywords": ["add_user", "query_by_username", "edit_user", "delete_user", "reset_filters", "export_all", "边界", "逆向"]
+    },
+    {
+      "id": "G2_history",
+      "page_name": "历史查询",
+      "po_module": "history_page",
+      "po_class": "HistoryPage",
+      "fixture_name": "history_page",
+      "po_methods": "  def query_by_patient_name(text):\n  def query_by_device_id(text):\n  def select_gender_dropdown(option_index):\n  def select_usage_type_dropdown(option_index):\n  def click_query():\n  def click_reset():\n  def get_row_count():",
+      "page_structure": {
+        "title": "历史查询",
+        "inputs": [
+          {"name": "patient_name", "placeholder": "患者姓名", "type": "text", "required": false},
+          {"name": "phone", "placeholder": "手机号", "type": "text", "required": false},
+          {"name": "device_id", "placeholder": "设备ID", "type": "text", "required": false}
+        ],
+        "buttons": [
+          {"text": "查询", "class": "el-button--primary"},
+          {"text": "重置", "class": "el-button"}
+        ],
+        "tables": [{"class": "el-table", "headers": ["患者姓名", "性别", "设备ID", "使用类型", "时间"]}],
+        "selects": [{"class": "el-select", "options": ["男", "女"]}]
+      },
+      "expected_categories": ["query", "reset", "gender", "usage_type"],
+      "expected_keywords": ["query_by_patient_name", "query_by_device_id", "select_gender_dropdown", "click_query", "click_reset", "get_row_count"]
+    }
+  ]
+}

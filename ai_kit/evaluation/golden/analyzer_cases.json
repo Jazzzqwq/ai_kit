@@ -1,0 +1,175 @@
+{
+  "_comment": "归因黄金集: 失败场景(traceback+log, 可选截图夹具) -> 已知根因分类。expected_category 取值与 ai/analyzer.py 常量一致。screenshot_fixture 为可选, 相对 fixtures/ 路径, --llm 时渲染成 PNG 走多模态。case 覆盖 6 大类别, 并按 Phase-1 规则命中数拉开置信度(0.0/0.8/0.9/1.0), 使混淆矩阵与 ECE 更稳。",
+  "cases": [
+    {
+      "id": "A1_no_such_element",
+      "traceback": "Traceback (most recent call last):\n  File 'x.py', line 10\nselenium.common.exceptions.NoSuchElementException: Message: no such element: Unable to locate element: {\"method\":\"css selector\",\"selector\":\".el-message-box\"}",
+      "log": "click with retry failed",
+      "expected_category": "脚本-定位器问题",
+      "note": "元素找不到"
+    },
+    {
+      "id": "A2_timeout",
+      "traceback": "selenium.common.exceptions.TimeoutException: Message: timeout waiting for element to be clickable",
+      "log": "WebDriverWait 10s elapsed",
+      "expected_category": "脚本-等待问题",
+      "note": "显式等待超时"
+    },
+    {
+      "id": "A3_stale",
+      "traceback": "selenium.common.exceptions.StaleElementReferenceException: Message: stale element reference: element is not attached to the page document",
+      "log": "after re-render",
+      "expected_category": "脚本-等待问题",
+      "note": "DOM 引用过期"
+    },
+    {
+      "id": "A4_import_error",
+      "traceback": "ModuleNotFoundError: No module named 'allure'",
+      "log": "",
+      "expected_category": "脚本-语法/导入",
+      "note": "依赖缺失"
+    },
+    {
+      "id": "A5_session_dead",
+      "traceback": "selenium.common.exceptions.WebDriverException: Message: no such window: target window already closed",
+      "log": "browser crashed",
+      "expected_category": "环境问题",
+      "note": "浏览器 session 断了"
+    },
+    {
+      "id": "A6_assertion",
+      "traceback": "AssertionError: 预期表格 5 行, 实际 0 行",
+      "log": "query returned empty",
+      "expected_category": "产品缺陷",
+      "note": "断言不匹配"
+    },
+    {
+      "id": "A7_click_intercepted",
+      "traceback": "selenium.common.exceptions.ElementClickInterceptedException: Message: element click intercepted: Other element would receive the click",
+      "log": "overlay mask",
+      "expected_category": "脚本-定位器问题",
+      "note": "被遮挡"
+    },
+    {
+      "id": "A8_unknown",
+      "traceback": "FlarpWidgetError: the quux did not bar the baz",
+      "log": "totally unfamiliar",
+      "expected_category": "未知-待人工分析",
+      "note": "规则都不命中"
+    },
+    {
+      "id": "A9_silent_reject_with_screenshot",
+      "traceback": "AssertionError: 创建用户返回 False 但 status 200, 响应体 errors=[]",
+      "log": "后端静默拒绝, 前端无 toast",
+      "screenshot_fixture": "form_error.html",
+      "expected_category": "产品缺陷",
+      "note": "--llm 多模态: 看到 is-error 标红但无提示"
+    },
+    {
+      "id": "A10_element_not_interactable",
+      "traceback": "selenium.common.exceptions.ElementNotInteractableException: Message: element not interactable: [HTMLElement] is not visible",
+      "log": "element has zero size",
+      "expected_category": "脚本-定位器问题",
+      "note": "元素存在但不可交互 (双命中 0.9)"
+    },
+    {
+      "id": "A11_click_intercepted_cookie",
+      "traceback": "selenium.common.exceptions.ElementClickInterceptedException: Message: element click intercepted: Element <button> is obscured by a cookie banner",
+      "log": "floating overlay on top",
+      "expected_category": "脚本-定位器问题",
+      "note": "被浮层拦截点击"
+    },
+    {
+      "id": "A12_locator_multi_signal",
+      "traceback": "selenium.common.exceptions.NoSuchElementException: Message: no such element: Unable to locate element; then element not interactable on retry",
+      "log": "wrapper teleport changed DOM",
+      "expected_category": "脚本-定位器问题",
+      "note": "三条定位器信号 -> 三命中 1.0"
+    },
+    {
+      "id": "A13_import_error_named",
+      "traceback": "ImportError: cannot import name 'wait_for' from 'selenium.webdriver.support' (unknown location)",
+      "log": "",
+      "expected_category": "脚本-语法/导入",
+      "note": "导入符号不存在"
+    },
+    {
+      "id": "A14_syntax_error",
+      "traceback": "  File \"pages/x.py\", line 42\nSyntaxError: invalid syntax",
+      "log": "just edited the page object",
+      "expected_category": "脚本-语法/导入",
+      "note": "改代码留下的语法错"
+    },
+    {
+      "id": "A15_syntax_and_import",
+      "traceback": "SyntaxError: unexpected EOF while parsing; on rerun also ModuleNotFoundError: No module named 'allure_commons'",
+      "log": "two script-level issues",
+      "expected_category": "脚本-语法/导入",
+      "note": "同规则两命中 -> 0.9"
+    },
+    {
+      "id": "A16_connection_refused",
+      "traceback": "requests.exceptions.ConnectionError: [Errno 111] Connection refused to http://selenium-hub:4444/wd/hub",
+      "log": "hub not reachable",
+      "expected_category": "环境问题",
+      "note": "连不上 grid/hub"
+    },
+    {
+      "id": "A17_session_not_created",
+      "traceback": "selenium.common.exceptions.SessionNotCreatedException: Message: session not created: Chrome instance exited (version mismatch)",
+      "log": "driver/browser version mismatch",
+      "expected_category": "环境问题",
+      "note": "driver 与浏览器版本不匹配"
+    },
+    {
+      "id": "A18_invalid_session",
+      "traceback": "selenium.common.exceptions.InvalidSessionIdException: Message: invalid session id; target window already closed",
+      "log": "browser process killed mid-run",
+      "expected_category": "环境问题",
+      "note": "session id 失效 (双命中 0.9)"
+    },
+    {
+      "id": "A19_stale_after_refresh",
+      "traceback": "selenium.common.exceptions.StaleElementReferenceException: Message: stale element reference: element is not attached to the page document",
+      "log": "list re-rendered after async load",
+      "expected_category": "脚本-等待问题",
+      "note": "刷新后引用失效 (双命中 0.9)"
+    },
+    {
+      "id": "A20_timeout_page_load",
+      "traceback": "selenium.common.exceptions.TimeoutException: Message: Timeout waiting for page to load after 30s",
+      "log": "slow backend, spinner never gone",
+      "expected_category": "脚本-等待问题",
+      "note": "页面加载超时"
+    },
+    {
+      "id": "A21_prod_silent_reject",
+      "traceback": "ValueError: 新增被拦截: errors=[] 但接口返回 200, 列表无新记录",
+      "log": "后端字段校验静默失败, 前端无提示",
+      "expected_category": "产品缺陷",
+      "note": "命中静默拒绝规则 (双命中 0.9)"
+    },
+    {
+      "id": "A22_prod_assertion_count",
+      "traceback": "AssertionError: 期望列表 10 条, 实际 3 条",
+      "log": "pagination returned fewer rows",
+      "expected_category": "产品缺陷",
+      "note": "数量断言不匹配"
+    },
+    {
+      "id": "A23_unknown_odd",
+      "traceback": "CustomRuntimeBlorp: unexpected nil quuz in widget factory",
+      "log": "no known selenium/python error token here",
+      "expected_category": "未知-待人工分析",
+      "note": "规则全不命中 -> 0.0"
+    },
+    {
+      "id": "A24_prod_assertion_no_toast",
+      "traceback": "AssertionError: 提交后表单字段仍标红 is-error, 页面没有任何错误提示文案",
+      "log": "user expects a toast but none shown",
+      "screenshot_fixture": "form_error.html",
+      "expected_category": "产品缺陷",
+      "note": "--llm 多模态辅助确认无提示"
+    }
+  ]
+}

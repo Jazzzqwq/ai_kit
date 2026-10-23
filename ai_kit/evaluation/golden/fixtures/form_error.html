@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <title>form error fixture (产品缺陷场景)</title>
+  <style>
+    .el-form-item.is-error .el-input__wrapper { box-shadow: 0 0 0 1px #f56c6c inset; }
+    .el-form-item__error { color: #f56c6c; font-size: 12px; }
+    .hint { color: #999; margin-top: 16px; }
+  </style>
+</head>
+<body>
+  <!-- 校验字段标红 (is-error), 但页面上没有任何 toast / message 提示 -->
+  <!-- 对应"产品缺陷: 后端静默拒绝但前端无明确错误提示"场景, --llm 时渲染成截图喂多模态 -->
+  <form class="el-form">
+    <div class="el-form-item is-error">
+      <label>用户名</label>
+      <div class="el-input"><div class="el-input__wrapper"><input value="admin" /></div></div>
+      <div class="el-form-item__error">请检查输入</div>
+    </div>
+    <button type="button" class="el-button el-button--primary">保存</button>
+    <div class="hint">注: 提交后 errors=[] 但接口返回失败, 无全局提示</div>
+  </form>
+</body>
+</html>

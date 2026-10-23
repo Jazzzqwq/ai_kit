@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# 虚拟环境与本地密钥
+.venv/
+.env
+.env.local
+
+# 测试/评测产物
+.pytest_cache/
+allure-results/
+allure-reports/
+*.log
+
+# 站点 profile 可能含账号/业务敏感信息, 只提交示例
+ai_kit/profiles/sites/*.json
+!ai_kit/profiles/sites/example_*.json
+
+# runtime outputs
+ai_evaluation_report.*
+locator_heal_cache.json

@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head><meta charset="utf-8"><title>el-dialog fixture</title></head>
+<body>
+  <!-- 坏定位器 "body > div.el-dialog" 失败 (隔了 __wrapper) -->
+  <div class="el-dialog__wrapper">
+    <div class="el-dialog" data-eval-target="dlg_root">
+      <div class="el-dialog__header"><span class="el-dialog__title">编辑</span><button class="el-dialog__headerbtn"><i class="el-dialog__close" data-eval-target="dlg_close"></i></button></div>
+      <div class="el-dialog__body">
+        <input class="el-input__inner" placeholder="名称" />
+      </div>
+      <div class="el-dialog__footer">
+        <button class="el-button el-button--primary"><span>保存</span></button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
