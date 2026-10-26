@@ -17,6 +17,10 @@
 5.9 的成本与缓存: plan_cached 把校验完的计划存进 plans/<fingerprint>.json, 键含
 指纹 + profile + model + 提示词版本; 命中直接复用, 未命中才算钱 (ai_kit.ledger 管预算
 与 runs.jsonl 记账)。
+5.10 的 prompt: 模板集中在 perception/prompts.py —— system 只写硬约束 (只能用清单里
+的 eid / 只能用列出的 PO 方法 / 不许写代码), user 只贴五块事实 (原型 / checklist /
+元素清单 JSON / PO 签名 / 输出 schema), temperature=0.1 且 max_tokens 显式给,
+重试时把校验错误原文回填。模型只产用例清单, 代码一律由 renderer 渲染。
 
 用法:
     from ai_kit.perception import collect, from_inventory, classify, annotate, expand, plan
@@ -60,6 +64,13 @@
     p = plan_cached(inv, render=render, ask=client.chat_json,   # 命中缓存就不调模型
                     budget=Budget(0.5), ledger=RunLedger())     # 超 0.5 元即停
     p.diagnostics["cache"]                                      # 命中/未命中 都有一行说明
+
+    from ai_kit.perception import po_signatures_from_dir
+
+    sigs = po_signatures_from_dir("pages")                      # ['search_by_name(name)', ...]
+    plan_cached(inv, ask=client.chat_json, mode="po",           # po 模式: 签名进 prompt,
+                po_methods=po_methods_from_dir("pages"),        # 模型只能照签名排参数
+                po_signatures=sigs)
 """
 from ai_kit.perception.archetype import (
     ARCHETYPES,
@@ -132,6 +143,7 @@ from ai_kit.perception.planner import (
     plan_verified,
     plan_with_llm,
     po_methods_from_dir,
+    po_signatures_from_dir,
     resolve_ref,
     validate_case,
     validate_schema,
@@ -259,6 +271,7 @@ __all__ = [
     "plan_with_llm",
     "plans_dir",
     "po_methods_from_dir",
+    "po_signatures_from_dir",
     "render",
     "resolve_ref",
     "save_plan",

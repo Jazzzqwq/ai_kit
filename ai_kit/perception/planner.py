@@ -50,6 +50,7 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Seque
 from urllib.parse import urlsplit
 
 from ai_kit.ledger import BudgetExceeded
+import ai_kit.perception.prompts as llm_prompts
 from ai_kit.perception.archetype import classify
 from ai_kit.perception.inventory import ElementSpec, PageInventory, from_inventory
 from ai_kit.perception.strategies import (
@@ -74,8 +75,9 @@ from ai_kit.perception.strategies import (
     expand,
 )
 
-# 步骤模板/动作词表改了就 +1: 缓存键要带它, 否则旧计划会盖住新模板
-PLANNER_VERSION = "planner.v3"
+# 步骤模板/动作词表/LLM prompt 改了就 +1: 缓存键要带它, 否则旧计划会盖住新模板
+# v4: 5.10 重写 prompt (system 硬约束 + 五块事实 + PO 签名段), 旧计划必须重新生成
+PLANNER_VERSION = "planner.v4"
 
 # 卡片 5.6 的优先级: P0 blocker / P1 critical / P2 normal / P3 minor
 P0, P1, P2, P3 = "P0", "P1", "P2", "P3"
@@ -1733,79 +1735,55 @@ def plan_cache_key(inventory: Any, archetype: str = "", *, profile: str = "",
 
 
 # ---------------------------------------------------------------------------
-# 可选增强: LLM 改步骤, 但必须过同一套校验
+# 可选增强: LLM 改步骤, 但必须过同一套校验 (prompt 约束见 perception/prompts.py)
 # ---------------------------------------------------------------------------
-
-PLANNER_SYSTEM = """你在为一套 UI 自动化框架写测试步骤, 只输出 JSON。
-
-硬约束:
-1. 每一步只能是 {"action": str, "eid": str?, "value": any?}, 不许出现代码/定位串。
-2. eid 只能取输入清单里出现过的 ref (元素 eid / c1.column:列名 / c1.row:按钮 / chart:1 / page)。
-3. action 只能取下面词表里的名字, 不许自创。
-4. 不要编造页面上的控件; 缺人就少写, 不要为了凑步骤硬填。
-5. 返回 {"cases": [{"case_id": "LC-001", "steps": [...], "cleanup": [...], "reason": "一句话"}]};
-   只返回你确实改过的用例, 没改的不要出现。"""
-
-
-def _slim_inventory(inv: PageInventory, max_items: int = 40) -> Dict[str, Any]:
-    """给 LLM 的清单摘要: 丢掉 html/定位串, 只留能决策的字段"""
-    def slim_element(element: ElementSpec) -> Dict[str, Any]:
-        row: Dict[str, Any] = {"eid": element.eid, "kind": element.kind,
-                               "type": element.type, "name": element.name,
-                               "container": element.container, "risk": element.risk}
-        if element.options:
-            row["options"] = list(element.options)[:8]
-        if element.constraints:
-            row["constraints"] = dict(element.constraints)
-        return row
-
-    return {
-        "url": inv.url, "title": inv.title, "archetype": inv.archetype,
-        "signals": dict(inv.signals),
-        "elements": [slim_element(element) for element in inv.elements[:max_items]],
-        "tables": [{"eid": table.get("eid"), "columns": list(table.get("columns") or ())[:10],
-                    "row_count": table.get("row_count"),
-                    "row_actions": [dict(action) for action in (table.get("row_actions") or ())[:8]]}
-                   for table in inv.tables],
-        "dialogs": [{"eid": dialog.get("eid"), "buttons": list(dialog.get("buttons") or ())}
-                    for dialog in inv.dialogs],
-        "notes": list(inv.notes)[:5],
-    }
-
-
-def _action_catalog_text() -> str:
-    lines = []
-    for action in ACTIONS.values():
-        eid = {"req": "必须", "opt": "可选", "none": "不要"}[action.eid]
-        value = {"req": "必须", "opt": "可选", "": "不要"}[action.value]
-        lines.append(f"- {action.name}: {action.doc} | eid {eid} | value {value}")
-    return "\n".join(lines)
+#
+# 模型只产「用例清单 JSON」, 不产代码 (5.10 的两步法): 代码由 ⑥ 按模板渲染 ——
+# 一旦模型开始写 pytest 函数, 定位串/等待时间/隐式睡眠就都回到它手里了。
 
 
 def _llm_prompt(inv: PageInventory, current: TestPlan, cases: Sequence[PlanCase],
-                errors: Optional[Mapping[str, Sequence[str]]] = None) -> str:
-    """errors: 上一轮校验的问题 (5.7 的回填重生成); 不传就是一次性改写"""
+                errors: Optional[Mapping[str, Sequence[str]]] = None, *,
+                po_methods: Iterable[str] = (),
+                po_signatures: Iterable[str] = ()) -> str:
+    """五块事实 (原型/checklist/清单 JSON/PO 签名/schema) + 本轮用例 + 上轮错误
+
+    errors: 上一轮校验的问题 (5.7 的回填重生成); 不传就是一次性改写。
+    po_methods / po_signatures: po 模式才有 —— 非 po 模式这两段整段不出现。
+    """
     payload = [{"case_id": case.case_id, "cid": case.cid, "title": case.title,
                 "expect": list(case.expect),
                 "steps": [step.to_dict() for step in case.steps]} for case in cases]
-    text = (f"页面: {inv.url}\n原型: {current.archetype}\n\n"
-            f"## 动作词表\n{_action_catalog_text()}\n\n"
-            f"## 页面清单\n{json.dumps(_slim_inventory(inv), ensure_ascii=False)}\n\n"
-            f"## 现有用例 (可以改步骤, 不能改 case_id/title/期望)\n"
-            f"{json.dumps(payload, ensure_ascii=False)}")
-    if errors:
-        detail = [{"case_id": case_id, "problems": list(messages)}
-                  for case_id, messages in errors.items()]
-        text += ("\n\n## 上次校验没通过的地方 (逐条改掉, 没问题的步骤别动)\n"
-                 + json.dumps(detail, ensure_ascii=False))
-    return text
+    # checklist 与缓存键同一口径: 计划里的 archetype 是 unknown 时也要给出真正的清单,
+    # 否则「策略 checklist」这一段对模型就是空的 —— 那就等于让它自己发明测试点。
+    name = str(current.archetype or "").strip().lower()
+    if name not in CHECKLISTS:
+        name = str(inv.archetype or "").strip().lower()
+    if name not in CHECKLISTS:
+        name = classify(inv).archetype
+    return llm_prompts.build_user_prompt(
+        archetype=name,
+        checklist=CHECKLISTS.get(name, ()),
+        inventory=llm_prompts.slim_inventory(inv),
+        actions=ACTIONS.values(),
+        po_methods=po_methods,
+        po_signatures=po_signatures,
+        cases=payload,
+        errors=errors,
+    )
 
 
 def _ask_llm(prompt: str) -> Any:
-    """默认问法: 惰性 import client —— 默认路径不碰网络也不碰密钥"""
+    """默认问法: 惰性 import client —— 默认路径不碰网络也不碰密钥
+
+    temperature / max_tokens 都显式给 (5.10 第 3 条): 不指定上限等于把这次调用的
+    花费交给服务端默认值 一一 一份跑飞的 JSON 可能一次烧穿整次 run 的预算。
+    """
     from ai_kit import client
 
-    return client.chat_json(PLANNER_SYSTEM, prompt, max_retries=0)
+    return client.chat_json(llm_prompts.PLANNER_SYSTEM, prompt, max_retries=0,
+                            temperature=llm_prompts.TEMPERATURE,
+                            max_tokens=llm_prompts.max_tokens())
 
 
 def _steps_from(raw: Any, field_name: str = "steps"
@@ -1826,7 +1804,8 @@ def _steps_from(raw: Any, field_name: str = "steps"
 
 
 def plan_with_llm(inventory: Any, *, ask: Optional[Callable[[str], Any]] = None,
-                  max_cases: int = 0, model: str = "", **kwargs: Any) -> TestPlan:
+                  max_cases: int = 0, model: str = "", po_methods: Iterable[str] = (),
+                  po_signatures: Iterable[str] = (), **kwargs: Any) -> TestPlan:
     """确定性计划 + LLM 改写 (逐条校验, 不通就保留原步骤)
 
     ask 可注入 (测试/换模型); 默认走 client.chat_json。任何异常/脏返回都退化成
@@ -1841,7 +1820,8 @@ def plan_with_llm(inventory: Any, *, ask: Optional[Callable[[str], Any]] = None,
     problems = list(base.problems)
 
     try:
-        answer = (ask or _ask_llm)(_llm_prompt(inv, base, pool))
+        answer = (ask or _ask_llm)(_llm_prompt(inv, base, pool, po_methods=po_methods,
+                                               po_signatures=po_signatures))
     except BudgetExceeded:
         # 预算用完不是「LLM 抽风」: 吞成「用确定性步骤」就等于钱花完了却没人知道
         raise
@@ -2384,6 +2364,45 @@ def po_methods_from_dir(directory: Any) -> Tuple[str, ...]:
     return tuple(sorted(names))
 
 
+def _signature_of(node: ast.AST) -> str:
+    """函数定义 -> name(a, b=...) (去掉 self/cls; 默认值只写 =..., 不求值)"""
+    args = list(getattr(node.args, "posonlyargs", ())) + list(node.args.args)
+    defaults = list(node.args.defaults)
+    pad = len(args) - len(defaults)
+    rows: List[str] = []
+    for index, arg in enumerate(args):
+        if index == 0 and arg.arg in ("self", "cls"):
+            continue
+        rows.append(arg.arg if index < pad else f"{arg.arg}=...")
+    if node.args.vararg:
+        rows.append(f"*{node.args.vararg.arg}")
+    if node.args.kwarg:
+        rows.append(f"**{node.args.kwarg.arg}")
+    return f"{node.name}({', '.join(rows)})"
+
+
+def po_signatures_from_dir(directory: Any) -> Tuple[str, ...]:
+    """扫 pages/ 下的 .py 收集「方法名(参数)」(只读 AST, 不 import 被测项目)
+
+    卡片 5.10 要的是签名而不是光秃秃的方法名: 模型看到 search_by_name(name) 才能
+    排对参数; 只给名字, 它就会去猜参数个数 —— 而 ③ 只能拦住不存在的方法名,
+    拦不住参数传错。
+    """
+    root = Path(str(directory or ""))
+    if not root.is_dir():
+        return ()
+    rows: List[str] = []
+    for path in sorted(root.rglob("*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, SyntaxError):
+            continue
+        rows.extend(_signature_of(node) for node in ast.walk(tree)
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and not node.name.startswith("_"))
+    return tuple(sorted(dict.fromkeys(rows)))
+
+
 # ---------------------------------------------------------------------------
 # ④ 去重: 标题归一化 + 步骤序列 Jaccard
 # ---------------------------------------------------------------------------
@@ -2691,6 +2710,7 @@ def _merge_rewrites(inv: Optional[PageInventory], cases: Sequence[PlanCase],
 
 def plan_verified(inventory: Any, *, ask: Optional[Callable[[str], Any]] = None,
                   max_retries: int = 2, mode: str = "", po_methods: Iterable[str] = (),
+                  po_signatures: Iterable[str] = (),
                   render: Optional[Callable[[TestPlan], Mapping[str, str]]] = None,
                   driver: Any = None, dedupe: bool = True,
                   threshold: float = DUP_THRESHOLD, **kwargs: Any) -> TestPlan:
@@ -2718,7 +2738,9 @@ def plan_verified(inventory: Any, *, ask: Optional[Callable[[str], Any]] = None,
             break
         targets = [case for case in current.cases if case.case_id in pending]
         try:
-            answer = ask(_llm_prompt(inv, current, targets, errors=pending))
+            answer = ask(_llm_prompt(inv, current, targets, errors=pending,
+                                     po_methods=po_methods,
+                                     po_signatures=po_signatures))
         except BudgetExceeded:
             # 预算用完: 直接停, 不把它降级成「这一轮 LLM 抽风, 换下一轮」
             raise

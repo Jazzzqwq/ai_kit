@@ -223,6 +223,7 @@ def test_documented_submodules_import_with_budget_deps_only(tmp_path):
         "ai_kit.generator.prompts",
         "ai_kit.profiles",
         "ai_kit.perception",
+        "ai_kit.perception.prompts",
         "ai_kit.proposal",
         "ai_kit.runtime",
         "ai_kit.utils",

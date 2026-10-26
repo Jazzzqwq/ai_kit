@@ -443,7 +443,7 @@ def test_page_is_a_path_not_a_full_url():
 
 
 def test_prompt_version_and_generated_at():
-    assert PLANNER_VERSION == "planner.v3"
+    assert PLANNER_VERSION == "planner.v4"
     assert plan(list_payload(), generated_at="2026-01-01T00:00:00+00:00").generated_at \
         == "2026-01-01T00:00:00+00:00"
     assert plan(list_payload()).generated_at

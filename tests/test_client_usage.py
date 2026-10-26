@@ -179,16 +179,20 @@ def _params(fn):
 
 
 def test_public_signatures_unchanged():
+    # 5.10 第 3 条只加了一个尾巴参数 max_tokens (显式上限), 前面一个都没动:
+    # 位置参数一旦错位, 线上调用会静默地把 prompt 传到 temperature 上。
     assert _params(client.chat) == [
-        ("messages", _EMPTY), ("temperature", 0.1), ("max_retries", 2)]
+        ("messages", _EMPTY), ("temperature", 0.1), ("max_retries", 2),
+        ("max_tokens", None)]
     assert _params(client.chat_json) == [
-        ("system_prompt", _EMPTY), ("user_prompt", _EMPTY), ("max_retries", 2)]
+        ("system_prompt", _EMPTY), ("user_prompt", _EMPTY), ("max_retries", 2),
+        ("temperature", 0.1), ("max_tokens", None)]
     assert _params(client.chat_with_image) == [
         ("system_prompt", _EMPTY), ("user_text", _EMPTY), ("image_base64", _EMPTY),
-        ("image_mime", "image/png"), ("max_retries", 2)]
+        ("image_mime", "image/png"), ("max_retries", 2), ("max_tokens", None)]
     assert _params(client.chat_json_with_image) == [
         ("system_prompt", _EMPTY), ("user_text", _EMPTY), ("image_base64", _EMPTY),
-        ("image_mime", "image/png"), ("max_retries", 2)]
+        ("image_mime", "image/png"), ("max_retries", 2), ("max_tokens", None)]
     assert _params(client.get_last_usage) == []
     assert _params(client.get_cumulative_usage) == []
     assert _params(client.test_connection) == []

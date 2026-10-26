@@ -75,11 +75,14 @@ def _record_usage(data: Any) -> None:
 
 def chat(messages: List[Dict[str, str]],
          temperature: float = 0.1,
-         max_retries: int = 2) -> Optional[str]:
+         max_retries: int = 2,
+         max_tokens: Optional[int] = None) -> Optional[str]:
     """
     调 LLM 对话, 返回文本回答. 任何异常返回 None.
     - messages: [{"role": "system", "content": "..."}, {"role": "user", "content": "..."}]
     - temperature: 0 更保守 (适合代码生成/分类), 1 更发散
+    - max_tokens: 显式上限, 覆盖 provider 配置; 不传则用配置里的 (再没有就不发这个字段)
+      生成侧必须显式给 —— 交给服务端默认值, 一次跑飞的 JSON 就可能烧穿预算
     """
     if not _HAS_REQUESTS:
         return None
@@ -102,7 +105,9 @@ def chat(messages: List[Dict[str, str]],
         "messages": messages,
         "temperature": temperature,
     }
-    if cfg.get("max_tokens"):
+    if max_tokens:
+        payload["max_tokens"] = int(max_tokens)
+    elif cfg.get("max_tokens"):
         payload["max_tokens"] = cfg["max_tokens"]
 
     last_err = None
@@ -138,16 +143,20 @@ def chat(messages: List[Dict[str, str]],
 # ---------------------------------------------------------------------------
 
 def chat_json(system_prompt: str, user_prompt: str,
-              max_retries: int = 2) -> Optional[Dict[str, Any]]:
+              max_retries: int = 2, *,
+              temperature: float = 0.1,
+              max_tokens: Optional[int] = None) -> Optional[Dict[str, Any]]:
     """
     要求 LLM 返回 JSON, 自动提取 + 解析. 返回 dict 或 None.
+    temperature/max_tokens 原样透传给 chat: 结构化输出该给多少额度, 由调用方说了算。
     """
     msgs = [
         {"role": "system",
          "content": system_prompt + "\n\n请严格只返回 JSON, 不要 markdown 代码块标记 (```json)。"},
         {"role": "user", "content": user_prompt},
     ]
-    raw = chat(msgs, temperature=0.1, max_retries=max_retries)
+    raw = chat(msgs, temperature=temperature, max_retries=max_retries,
+               max_tokens=max_tokens)
     if not raw:
         return None
 
@@ -186,7 +195,8 @@ def chat_with_image(system_prompt: str,
                     user_text: str,
                     image_base64: str,
                     image_mime: str = "image/png",
-                    max_retries: int = 2) -> Optional[str]:
+                    max_retries: int = 2,
+                    max_tokens: Optional[int] = None) -> Optional[str]:
     """
     多模态调用: text + 1 张图片 (base64). 失败返回 None.
     image_base64: 纯 base64 字符串 (不含 data:image/xxx;base64, 前缀)
@@ -204,16 +214,18 @@ def chat_with_image(system_prompt: str,
             {"type": "image_url", "image_url": {"url": data_url}},
         ]},
     ]
-    return chat(msgs, temperature=0.2, max_retries=max_retries)
+    return chat(msgs, temperature=0.2, max_retries=max_retries, max_tokens=max_tokens)
 
 
 def chat_json_with_image(system_prompt: str,
                          user_text: str,
                          image_base64: str,
                          image_mime: str = "image/png",
-                         max_retries: int = 2) -> Optional[dict]:
+                         max_retries: int = 2,
+                         max_tokens: Optional[int] = None) -> Optional[dict]:
     """多模态 + JSON 结构化输出. 返回 dict 或 None."""
-    raw = chat_with_image(system_prompt, user_text, image_base64, image_mime, max_retries)
+    raw = chat_with_image(system_prompt, user_text, image_base64, image_mime, max_retries,
+                          max_tokens=max_tokens)
     if not raw:
         return None
 

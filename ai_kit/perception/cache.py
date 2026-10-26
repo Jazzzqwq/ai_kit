@@ -187,6 +187,7 @@ def plan_cached(inventory: Any, *, render: Any = None, ask: Any = None,
                 budget: Optional[Budget] = None, ledger: Optional[RunLedger] = None,
                 root: Any = None, archetype: str = "", prompt_version: str = PLANNER_VERSION,
                 max_retries: int = 2, mode: str = "", po_methods: Iterable[str] = (),
+                po_signatures: Iterable[str] = (),
                 driver: Any = None, dedupe: bool = True, threshold: float = DUP_THRESHOLD,
                 **kwargs: Any) -> TestPlan:
     """带缓存 + 预算的计划生成: 命中直接复用, 未命中才算钱
@@ -209,7 +210,8 @@ def plan_cached(inventory: Any, *, render: Any = None, ask: Any = None,
         metered_ask = meter(ask, tag="plan", prompt_version=prompt_version,
                             budget=budget, ledger=ledger)
     fresh = plan_verified(inv, ask=metered_ask, render=render, max_retries=max_retries,
-                          mode=mode, po_methods=po_methods, driver=driver, dedupe=dedupe,
+                          mode=mode, po_methods=po_methods,
+                          po_signatures=po_signatures, driver=driver, dedupe=dedupe,
                           threshold=threshold, prompt_version=prompt_version, **kwargs)
     path, note = save_plan(fresh, inv, archetype=archetype, root=root)
     diagnostics = dict(fresh.diagnostics)
