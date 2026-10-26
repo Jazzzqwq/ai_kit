@@ -2157,14 +2157,31 @@ def check_live(inventory: Any, refs: Iterable[str], driver: Any) -> Tuple[List[s
 
 RUNTIME_PRIMITIVES: Tuple[str, ...] = (
     # actions (带失败上下文, 替代裸 selenium 调用)
-    "click", "fill", "clear", "select_option", "check", "uncheck", "press_key",
-    "get_text", "get_value", "goto", "reload", "back",
+    "click", "double_click", "fill", "clear", "select_option", "check", "uncheck",
+    "press_key", "get_text", "get_value", "goto", "reload", "back",
+    # 表格 / 分页 / 弹窗 (standalone 只靠 loc() 也能做)
+    "paginate", "set_page_size", "sort", "confirm_dialog", "cancel_dialog",
     # asserts
-    "assert_visible", "assert_hidden", "assert_text", "assert_value", "assert_count",
-    "assert_attr", "assert_no_error_toast", "assert_no_alert",
+    "assert_visible", "assert_hidden", "assert_inactive", "assert_text", "assert_value",
+    "assert_count", "assert_attr", "assert_field_error", "assert_masked",
+    "assert_autocomplete", "assert_no_error_toast", "assert_no_alert", "assert_loading",
+    "assert_page_ready_within", "assert_row_count", "assert_row_count_lte",
+    "assert_row_count_gte", "assert_count_matches_rows", "assert_rows_match",
+    "assert_sorted", "assert_no_duplicate_rows", "assert_empty_state",
+    "assert_selection_count", "assert_selection_count_gte", "assert_feedback",
+    "assert_persisted", "assert_not_persisted", "assert_login_error", "assert_logged_in",
+    "assert_locked", "assert_submit_failed",
     # waits (替代 time.sleep)
     "wait_visible", "wait_clickable", "wait_text", "wait_gone",
 )
+
+# runtime 的入口函数 (不是计划里的动作, 但渲染产物要靠它们接上线):
+#   loc("e12") / use_locators(path) / page.bind(driver) / page.unbind() / screenshot()
+RUNTIME_HELPERS: Tuple[str, ...] = (
+    "loc", "use_locators", "bind", "unbind", "screenshot",
+)
+# runtime 门面的别名: 产物里写 page.fill(...) 和 runtime.fill(...) 都算走了原语
+RUNTIME_RECEIVERS: Tuple[str, ...] = ("page", "runtime", "rt")
 
 # 自由函数调用: 内置函数够渲染器拼字符串/算数就行
 _SAFE_BUILTINS = frozenset((
@@ -2178,10 +2195,14 @@ _PY_METHODS = frozenset((
     "append", "extend", "insert", "pop", "get", "items", "keys", "values", "update",
     "setdefault", "copy", "join", "split", "splitlines", "strip", "lstrip", "rstrip",
     "replace", "lower", "upper", "startswith", "endswith", "format", "encode", "decode",
-    "read_text", "write_text", "exists", "mkdir", "with_suffix", "resolve", "isoformat",
-    "strftime", "sleep", "dumps", "loads", "group", "search", "match", "findall", "sub",
-    "fullmatch", "partition", "fromkeys", "index", "count", "sort", "reverse", "close",
+    "read_text", "write_text", "exists", "mkdir", "with_name", "with_suffix", "resolve",
+    "isoformat", "strftime", "sleep", "dumps", "loads", "group", "search", "match",
+    "findall", "sub", "fullmatch", "partition", "fromkeys", "index", "count", "sort",
+    "reverse", "close",
 ))
+
+# 白名单里的构造器: `Path(__file__)` 是产物找 locators.json 的唯一办法
+_SAFE_CTORS = frozenset(("Path",))
 
 # pytest 的调用面: 渲染产物是测试文件, 它当然要能断言/参数化
 _PYTEST_METHODS = frozenset((
@@ -2254,7 +2275,8 @@ def _call_problem(node: ast.Call, mode: str, primitives: set, py_names: set,
         name = func.id
         if name in BANNED_CALLS:
             return f"不许调用 {name}()"
-        if name in own_names or name in primitives or name in _SAFE_BUILTINS:
+        if name in own_names or name in primitives or name in _SAFE_BUILTINS \
+                or name in _SAFE_CTORS:
             return ""
         if not mode:
             return ""
@@ -2272,10 +2294,10 @@ def _call_problem(node: ast.Call, mode: str, primitives: set, py_names: set,
     receiver = func.value.id if isinstance(func.value, ast.Name) else ""
     if mode == "standalone":
         if name in primitives:
-            if receiver in ("runtime", "rt"):
+            if receiver in RUNTIME_RECEIVERS:
                 return ""
-            return (f".{name}() 必须走 runtime.{name}(...): standalone 模式只准用 "
-                    f"runtime 原语, 不直接碰 selenium 对象")
+            return (f".{name}() 必须走 runtime.{name}(...) / page.{name}(...): "
+                    f"standalone 模式只准用 runtime 原语, 不直接碰 selenium 对象")
         return (f".{name}() 越界: standalone 模式只准用 runtime 原语 "
                 f"(runtime.{name}(...) 或先在 runtime 里登记这个原语)")
     if name in primitives or name in _SELENIUM_METHODS or name in _PYTEST_METHODS:
@@ -2302,9 +2324,11 @@ def lint_source(source: str, *, mode: str = "", po_methods: Iterable[str] = (),
         tree = ast.parse(text)
     except SyntaxError as exc:
         return (LintProblem(exc.lineno or 1, f"源码解析失败: {exc.msg}"),)
-    primitives = set(RUNTIME_PRIMITIVES) | {str(name) for name in allow_calls if name}
+    primitives = set(RUNTIME_PRIMITIVES) | set(RUNTIME_HELPERS) \
+        | {str(name) for name in allow_calls if name}
     po_names = {str(name) for name in po_methods if name}
-    py_names = set(_PY_METHODS) | _PYTEST_METHODS if mode == "po" else set(_PY_METHODS)
+    # pytest 的 fixture/mark 两边都要能写: 产物本身就是测试文件
+    py_names = set(_PY_METHODS) | _PYTEST_METHODS
     own_names = _own_functions(tree)
     # 从 pages 导入的类本身要能实例化 (PO 模式的第一个动作就是 `XxxPage(driver)`)
     for node in ast.walk(tree):
@@ -2483,21 +2507,38 @@ def _as_sources(raw: Any, cases: Sequence[PlanCase]) -> Dict[str, str]:
 
 
 def _render_sources(render: Callable[[TestPlan], Any], target: TestPlan
-                    ) -> Tuple[Optional[Dict[str, str]], str]:
-    """调渲染器 -> (sources, 失败说明)。渲染爆了不该让校验也爆"""
+                    ) -> Tuple[Optional[Dict[str, str]], str, Dict[str, List[str]]]:
+    """调渲染器 -> (sources, 失败说明, 渲染器拒收的理由)
+
+    渲染爆了不该让校验也爆; 渲染器「拒收某条用例」(没有原语 / locators 里缺 eid /
+    po 没映射) 也不能当没发生 —— 不把理由带上去, 这些用例会在报告里被当成「一切
+    正常」, 而它们根本没有代码可跑。
+    """
+    def _reasons(raw: Any) -> Dict[str, List[str]]:
+        out: Dict[str, List[str]] = {}
+        for item in getattr(raw, "problems", ()) or ():
+            case_id = str(getattr(item, "case_id", "") or "")
+            message = str(getattr(item, "message", "") or item)
+            if case_id and message:
+                out.setdefault(case_id, []).append(message)
+        return out
+
     try:
-        return _as_sources(render(target), target.cases), ""
+        raw = render(target)
     except Exception as exc:            # noqa: BLE001 — 渲染器有 bug, 但校验要继续
-        return None, f"渲染失败, ③ AST 没跑: {exc}"
+        return None, f"渲染失败, ③ AST 没跑: {exc}", {}
+    return _as_sources(raw, target.cases), "", _reasons(raw)
 
 
 def verify(plan_: TestPlan, *, inventory: Any = None, driver: Any = None,
            mode: str = "", po_methods: Iterable[str] = (),
-           sources: Any = None,
+           sources: Any = None, render_problems: Any = None,
            dedupe: bool = True, threshold: float = DUP_THRESHOLD) -> TestPlan:
     """四层校验闭环的纯函数版: 原计划 -> 带问题/标记的新计划 (不改入参)
 
     sources: case_id -> 渲染出来的源码 (⑥ 给的); 不传就跳过 ③ 并说明。
+    render_problems: case_id -> [渲染器拒收的理由]; 它们算 ③ 的问题 —— 没有产物的
+    用例不能因为「没东西可查」就默认通过。
     inventory 不传只能跑 ①: 没有清单就无从解析引用, 拿空清单硬跑只会满屏假问题。
     """
     if not isinstance(plan_, TestPlan):
@@ -2542,8 +2583,12 @@ def verify(plan_: TestPlan, *, inventory: Any = None, driver: Any = None,
     diagnostics["live"] = live_lines
     diagnostics["live_skipped"] = live_skipped
 
-    # ③ AST 白名单: 只看渲染产物
+    # ③ AST 白名单: 只看渲染产物 (+ 渲染器自己说「这条生成不了」的理由)
     ast_lines: List[str] = []
+    for case_id, messages in (render_problems or {}).items():
+        for message in messages or ():
+            ast_lines.append(f"{case_id}: {message}")
+            note(str(case_id), str(message))
     rendered = _as_sources(sources, plan_.cases) if sources else {}
     if rendered:
         for case in plan_.cases:
@@ -2647,8 +2692,9 @@ def plan_verified(inventory: Any, *, ask: Optional[Callable[[str], Any]] = None,
                                    po_methods=po_methods, dedupe=dedupe,
                                    threshold=threshold)
     base = plan(inv, **kwargs)
-    sources, render_error = (_render_sources(render, base) if render else (None, ""))
-    current = verify(base, sources=sources, **options)
+    sources, render_error, render_problems = (
+        _render_sources(render, base) if render else (None, "", {}))
+    current = verify(base, sources=sources, render_problems=render_problems, **options)
     attempts: List[str] = [f"渲染失败: {render_error}"] if render_error else []
     for attempt in range(1, max(0, int(max_retries)) + 1):
         pending = dict(current.diagnostics.get("needs_review") or {})
@@ -2675,10 +2721,12 @@ def plan_verified(inventory: Any, *, ask: Optional[Callable[[str], Any]] = None,
         diagnostics = dict(current.diagnostics)
         diagnostics["problems"] = list(diagnostics.get("problems") or ()) + problems
         updated = replace(current, cases=tuple(merged), diagnostics=diagnostics)
-        sources, render_error = (_render_sources(render, updated) if render else (None, ""))
+        sources, render_error, render_problems = (
+            _render_sources(render, updated) if render else (None, "", {}))
         if render_error:
             attempts.append(render_error)
-        current = verify(updated, sources=sources, **options)
+        current = verify(updated, sources=sources, render_problems=render_problems,
+                         **options)
     diagnostics = dict(current.diagnostics)
     tail = f"重生成 {len(attempts)} 轮, 待人工确认 {len(current.review)} 条"
     diagnostics["verify"] = ("; ".join(attempts) + " -> " + tail) if attempts else tail
