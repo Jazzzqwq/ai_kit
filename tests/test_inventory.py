@@ -228,6 +228,15 @@ def test_dirty_elements_are_dropped_and_deduped():
     assert inv.stats["inputs"] == 1
 
 
+def test_element_kind_and_type_are_kept():
+    payload = sample(inputs=[{"eid": "e1", "kind": "input", "tag": "input",
+                              "type": "password", "constraints": {"type": "password"}}])
+    element = from_inventory(payload).element("e1")
+
+    assert element.kind == "input"
+    assert element.type == "password", "原型分类靠它区分密码框与普通文本框"
+
+
 def test_select_options_and_actions_survive():
     select = from_inventory(sample()).element("e6")
 
@@ -297,6 +306,13 @@ def test_forms_are_grouped_by_container():
     assert "table-row" not in by_container, "只有按钮的容器不是表单"
 
 
+def test_signals_are_normalised_to_int():
+    inv = from_inventory(sample(signals={"charts": 2, "junk": "x"}))
+
+    assert inv.signals == {"charts": 2, "junk": 0}, "信号只留非负整数"
+    assert from_inventory(sample()).signals == {}
+
+
 def test_stats_are_complete_ints():
     inv = from_inventory(sample())
     stats = inv.stats
@@ -358,6 +374,11 @@ def test_fingerprint_changes_when_dialog_buttons_change():
     assert fingerprint_of(other) != fingerprint_of(sample())
 
 
+def test_fingerprint_changes_when_charts_appear():
+    """图表数量是页面结构的一部分: 同一路径多了图表, 就不该命中旧计划"""
+    assert fingerprint_of(sample(signals={"charts": 1})) != fingerprint_of(sample())
+
+
 def test_fingerprint_keys_on_path_not_query():
     same = sample(url="https://shop.example.com/order/list?page=7&size=50")
     other = sample(url="https://shop.example.com/order/detail?page=2")
@@ -398,6 +419,7 @@ def test_to_dict_round_trips():
     assert [(e.name, e.primary, e.stability, e.risk) for e in again.elements] == \
            [(e.name, e.primary, e.stability, e.risk) for e in first.elements]
     assert again.stats == first.stats
+    assert again.signals == first.signals
     assert again.forms == first.forms
     assert again.links == first.links
     assert json.loads(json.dumps(first.to_dict()))["fingerprint"] == first.fingerprint

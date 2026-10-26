@@ -530,6 +530,22 @@ COLLECT_JS = r"""(function (opt) {
     dialogs.push({eid: deid, selector: dsel[d], text: txt(found, 120), buttons: dbtns});
   }
 
+  // 图表信号: 原型分类要把"数据看板"从列表/表单页里摘出来, 而图表本身不是可交互
+  // 元素 (canvas 点不点都一个样), 所以单独数一遍: 只计数, 不进元素清单。
+  // 嵌套容器 (.chart > canvas) 只算一次, 否则一张图会被数成两张。
+  var chartNodes = document.querySelectorAll('canvas, [class*=chart], [class*=echarts],' +
+                                            ' [class*=highcharts], [class*=recharts]');
+  var chartSet = [], cnode, cnew, c2;
+  for (i = 0; i < chartNodes.length && chartSet.length < 20; i++) {
+    cnode = chartNodes[i];
+    if (!cnode || !vis(cnode)) continue;
+    cnew = true;
+    for (c2 = 0; c2 < chartSet.length; c2++) {
+      if (chartSet[c2].contains(cnode) || cnode.contains(chartSet[c2])) { cnew = false; break; }
+    }
+    if (cnew) chartSet.push(cnode);
+  }
+
   var summary = {}, risks = {};
   for (i = 0; i < items.length; i++) {
     summary[items[i].container] = (summary[items[i].container] || 0) + 1;
@@ -555,6 +571,7 @@ COLLECT_JS = r"""(function (opt) {
     container_summary: summary,
     dialogs: dialogs,
     risks: risks,
+    signals: {charts: chartSet.length},
     truncated: truncated,
     groups: groups,
     notes: notes,
@@ -585,6 +602,7 @@ def empty_inventory(page_name: str = "", reason: str = "") -> Dict[str, Any]:
         "container_summary": {},
         "dialogs": [],
         "risks": {},
+        "signals": {},
         "truncated": False,
         "groups": [],
         "notes": [],
@@ -759,6 +777,14 @@ def normalize(payload: Any, page_name: str = "",
     inv["viewport"] = {"width": _as_int(viewport.get("width")),
                        "height": _as_int(viewport.get("height"))}
     inv["truncated"] = bool(payload.get("truncated"))
+
+    # 页面级信号 (目前只有 charts): 给原型分类用, 不属于元素清单
+    signals: Dict[str, int] = {}
+    for key, value in _as_dict(payload.get("signals")).items():
+        name = _as_text(key)
+        if name:
+            signals[name] = max(0, _as_int(value))
+    inv["signals"] = signals
 
     seen: set = set()
     inv["inputs"] = _clean_elements(payload.get("inputs"), "input", max_elements, seen)

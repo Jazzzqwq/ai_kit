@@ -510,6 +510,19 @@ def test_over_budget_collection_is_grouped(html_page):
     assert any("超过上限" in n for n in inv["notes"])
 
 
+def test_chart_signal_is_counted_once(html_page):
+    """图表不进元素清单 (canvas 不可交互), 但要给原型分类留个信号; 嵌套只算一次"""
+    inv = collect(html_page(
+        '<div class="chart-box"><canvas width="300" height="150"></canvas></div>'
+        '<canvas width="100" height="100"></canvas>'))
+
+    assert inv["signals"]["charts"] == 2, '.chart-box > canvas 是同一张图, 不能数两次'
+
+
+def test_plain_page_has_no_chart_signal(html_page):
+    assert collect(html_page("<button>保存</button>"))["signals"]["charts"] == 0
+
+
 def test_dom_depth_is_recorded(html_page):
     """清单里唯一能反映页面复杂度的原始信号; 定型层拿它算 stats.max_depth"""
     inv = collect(html_page(

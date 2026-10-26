@@ -143,6 +143,7 @@ class ElementSpec:
     risk: str = SAFE
     # --- 卡片之外的补充 (全部来自采集结果) ---
     kind: str = ""
+    type: str = ""
     primary: str = ""
     locator_by: Dict[str, str] = field(default_factory=dict)
     actions: Tuple[str, ...] = ()
@@ -182,6 +183,7 @@ class ElementSpec:
         return {
             "eid": self.eid,
             "kind": self.kind,
+            "type": self.type,
             "tag": self.tag,
             "role": self.role,
             "name": self.name,
@@ -222,6 +224,7 @@ class PageInventory:
     links: Tuple[Dict[str, Any], ...] = ()
     dialogs: Tuple[Dict[str, Any], ...] = ()
     stats: Dict[str, int] = field(default_factory=dict)
+    signals: Dict[str, int] = field(default_factory=dict)
     page_name: str = ""
     notes: Tuple[str, ...] = ()
 
@@ -282,6 +285,7 @@ class PageInventory:
             "page_name": self.page_name,
             "truncated": self.is_truncated,
             "stats": dict(self.stats),
+            "signals": dict(self.signals),
             "elements": [element.to_dict() for element in self.elements],
             "forms": [dict(record) for record in self.forms],
             "tables": [dict(record) for record in self.tables],
@@ -412,6 +416,7 @@ def _build_element(raw: Any, kind_hint: str = "") -> Optional[ElementSpec]:
         container=_text(raw.get("container")) or "page",
         risk=_text(raw.get("risk")) or SAFE,
         kind=_text(raw.get("kind")) or kind_hint,
+        type=_text(raw.get("type")),
         primary=primary,
         locator_by=locator_by,
         actions=actions,
@@ -533,6 +538,16 @@ def _forms_of(elements: Sequence[ElementSpec]) -> Tuple[Dict[str, Any], ...]:
     return tuple(forms)
 
 
+def _signals_of(raw: Any) -> Dict[str, int]:
+    """页面级信号 (charts 等): 给原型分类用, 只留非负整数"""
+    signals: Dict[str, int] = {}
+    for key, value in _dict(raw).items():
+        name = _text(key)
+        if name:
+            signals[name] = max(0, _int(value))
+    return signals
+
+
 def _stats_of(elements: Sequence[ElementSpec], tables: Sequence[Mapping],
               links: Sequence[Mapping], dialogs: Sequence[Mapping],
               forms: Sequence[Mapping], payload: Mapping) -> Dict[str, int]:
@@ -587,7 +602,8 @@ def canonical_dom(inventory: Any) -> str:
             ",".join(sorted(_text(button) for button in _items(dialog.get("buttons")))),
         )))
     body.sort()
-    head = [FINGERPRINT_PREFIX, f"collector={COLLECTOR_VERSION}", "path=" + _path_of(inv.url)]
+    head = [FINGERPRINT_PREFIX, f"collector={COLLECTOR_VERSION}", "path=" + _path_of(inv.url),
+            "signals=" + ",".join(f"{k}={v}" for k, v in sorted(inv.signals.items()))]
     return "\n".join(head + body)
 
 
@@ -652,6 +668,7 @@ def from_inventory(raw: Any, *, page_name: str = "", captured_at: str = "",
         links=links,
         dialogs=tuple(dialogs),
         stats=_stats_of(elements, tables, links, dialogs, forms, payload),
+        signals=_signals_of(payload.get("signals")),
         page_name=page_name or _text(payload.get("page_name")),
         notes=tuple(n for n in (_text(x, 200) for x in _items(payload.get("notes"))) if n),
     )
