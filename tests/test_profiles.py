@@ -160,6 +160,25 @@ def test_generic_l4_containers_cover_universal_patterns(selector):
     assert selector in load_profile("generic")["l4_containers"]
 
 
+def test_generic_carries_risk_keywords_for_crud_actions():
+    """风险词是采集层的唯一知识来源: 丢了它, 删除类按钮就不会被标成 destructive"""
+    pack = load_profile("generic")
+
+    assert "删除" in pack["risk_keywords"]["destructive"]
+    assert "保存" in pack["risk_keywords"]["write"]
+
+
+@pytest.mark.parametrize("selector", ["[role=dialog]", ".modal", "[class*=dialog]"])
+def test_generic_container_hints_cover_universal_dialogs(selector):
+    assert selector in load_profile("generic")["container_hints"]["dialog"]
+
+
+def test_framework_packs_add_their_own_dialog_hints():
+    """框架类名必须住在框架包里, 通用包只放 [role=dialog] 这类结构特征"""
+    assert ".el-message-box" in load_profile("element_plus")["container_hints"]["dialog"]
+    assert ".ant-modal" in load_profile("antd")["container_hints"]["dialog"]
+
+
 # ---------------------------------------------------------------------------
 # 默认规则包
 # ---------------------------------------------------------------------------
@@ -189,6 +208,15 @@ def test_default_containers_put_framework_patterns_before_generic():
 
 def test_default_rules_is_cached():
     assert default_rules() is default_rules()
+
+
+def test_default_rules_carry_collector_keys():
+    """采集层直接从 default_rules() 取风险词/容器提示, 这两个键必须非空"""
+    rules = default_rules()
+
+    assert "删除" in rules["risk_keywords"]["destructive"]
+    assert ".el-message-box" in rules["container_hints"]["dialog"]
+    assert "[role=dialog]" in rules["container_hints"]["dialog"]
 
 
 def test_effective_rules_does_not_touch_default_pack():
@@ -223,6 +251,24 @@ def test_merge_appends_intent_keywords_and_dedupes():
     merged = merge_profiles({"intent_keywords": {"confirm": ["确定", "ok"]}},
                             {"intent_keywords": {"confirm": ["yes", "确定"]}})
     assert merged["intent_keywords"]["confirm"] == ["yes", "确定", "ok"]
+
+
+def test_merge_concats_risk_keywords_with_site_first():
+    merged = merge_profiles({"risk_keywords": {"write": ["保存"]}},
+                            {"risk_keywords": {"write": ["提交", "保存"]}})
+    assert merged["risk_keywords"]["write"] == ["提交", "保存"]
+
+
+def test_merge_dirty_risk_keywords_never_wipes_builtin():
+    merged = merge_profiles({"risk_keywords": {"destructive": ["删除"]}},
+                            {"risk_keywords": {"destructive": "not-a-list"}})
+    assert merged["risk_keywords"]["destructive"] == ["删除"]
+
+
+def test_merge_concats_container_hints_with_site_first():
+    merged = merge_profiles({"container_hints": {"dialog": [".old"]}},
+                            {"container_hints": {"dialog": [".new"]}})
+    assert merged["container_hints"]["dialog"] == [".new", ".old"]
 
 
 @pytest.mark.parametrize("dirty", [
@@ -358,6 +404,8 @@ def test_explicit_profile_beats_env_var(monkeypatch):
     {"l1_rules": {"sel": {"by": "css selector"}}},
     {"semantic_candidates": {"dialog": ".not-a-list"}},
     {"semantic_candidates": {"dialog": [1, 2]}},
+    {"risk_keywords": {"write": "no"}},
+    {"container_hints": {"dialog": [1]}},
     {"intent_selectors": {"confirm": 42}},
     {"semantic_hints": [["[unclosed", "dialog"]]},
     {"l4_containers": [None]},

@@ -15,6 +15,8 @@
     intent_selectors    {confirm|cancel|close: css}
     l3_containers       [css, ...]  生成相对 XPath 前先确认存在的容器
     l4_containers       [css, ...]  抓给 LLM 的容器, 支持 [role=dialog] 这类通用模式
+    risk_keywords       {destructive|write: [关键词, ...]} 采集时给元素打风险标
+    container_hints     {dialog|toolbar|filter-bar: [css, ...]} 采集时判元素归属哪个容器
 
 只依赖 stdlib json —— 不引 PyYAML (任务约束), 规则包一律 JSON。
 """
@@ -34,8 +36,12 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 BUILTIN_DIR = os.path.join(_HERE, "builtin")
 SITES_DIR = os.path.join(_HERE, "sites")
 
-TABLE_KEYS: Tuple[str, ...] = ("l1_rules", "semantic_candidates",
-                               "intent_keywords", "intent_selectors")
+# 表类键里有两派语义: CONCAT_TABLE_KEYS 是"同键累积" (站点多加一个关键词/选择器不能把
+# 框架包的删掉), 其余 (l1_rules / intent_selectors) 是"后者覆盖前者"。
+# 采集层的 risk_keywords / container_hints 属于累积型 —— 站点包只要补上自己的业务词就行。
+CONCAT_TABLE_KEYS: Tuple[str, ...] = ("semantic_candidates", "intent_keywords",
+                                      "risk_keywords", "container_hints")
+TABLE_KEYS: Tuple[str, ...] = (("l1_rules",) + CONCAT_TABLE_KEYS + ("intent_selectors",))
 LIST_KEYS: Tuple[str, ...] = ("semantic_hints", "l3_containers", "l4_containers")
 RULE_KEYS: Tuple[str, ...] = TABLE_KEYS + LIST_KEYS
 META_KEYS: Tuple[str, ...] = ("schema", "name", "description")
@@ -183,7 +189,7 @@ def validate_profile(data: Any) -> List[str]:
                 if _as_text(loc) is None:
                     problems.append(f"l1_rules[{broken!r}] 缺少非空 locator")
 
-    for key in ("semantic_candidates", "intent_keywords", "intent_selectors"):
+    for key in CONCAT_TABLE_KEYS + ("intent_selectors",):
         table = data.get(key)
         if table is None:
             continue
@@ -257,7 +263,8 @@ def merge_profiles(*profiles: Any) -> Dict[str, Any]:
 
     - l1_rules 同键后者覆盖, 但后者写畸形时保留前者 (脏规则永不盖好规则)
     - semantic_candidates 同语义拼接, 后者在前 (站点候选先试, 再回落框架候选)
-    - intent_keywords 同 bucket 拼接, 后者在前 (站点同义词先试)
+    - intent_keywords / risk_keywords / container_hints 同 bucket 拼接, 后者在前
+      (站点同义词/容器先命中, 再回落框架)
     - intent_selectors 同 bucket 后者覆盖 (非空字符串才认)
     - 数组类键 (semantic_hints / l3_containers / l4_containers) 后者在前, 去重保序
 
@@ -278,13 +285,10 @@ def merge_profiles(*profiles: Any) -> Dict[str, Any]:
                 if key == "l1_rules":
                     if _usable_l1_rule(v):
                         bucket[k] = v
-                elif key == "semantic_candidates":
+                elif key in CONCAT_TABLE_KEYS:
                     if isinstance(v, (list, tuple)):
                         clean = [s.strip() for s in v if _as_text(s)]
                         bucket[k] = _dedupe([*clean, *(bucket.get(k) or [])])
-                elif key == "intent_keywords":
-                    if isinstance(v, (list, tuple)):
-                        bucket[k] = _dedupe([*v, *(bucket.get(k) or [])])
                 elif _as_text(v) is not None:
                     bucket[k] = _as_text(v)
         for key in LIST_KEYS:

@@ -74,5 +74,12 @@
     ".el-dialog",
     ".el-message-box__wrapper",
     "table.el-table__body"
-  ]
+  ],
+  "container_hints": {
+    "dialog": [
+      ".el-message-box",
+      ".el-dialog",
+      ".el-drawer"
+    ]
+  }
 }

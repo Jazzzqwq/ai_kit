@@ -21,5 +21,17 @@
   "l4_containers": [
     ".filter-card",
     ".shop-grid"
-  ]
+  ],
+  "risk_keywords": {
+    "destructive": ["作废订单", "退还库存"],
+    "write": ["确认下单", "去支付"]
+  },
+  "container_hints": {
+    "dialog": [
+      ".shop-dialog"
+    ],
+    "filter-bar": [
+      ".filter-card"
+    ]
+  }
 }

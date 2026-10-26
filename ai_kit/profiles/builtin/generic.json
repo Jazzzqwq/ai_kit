@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "name": "generic",
-  "description": "框架无关的通用规则包: 只提供 L4 容器通用模式。L1/L2 表故意留空 —— 它们承载的是具体框架的类名, 由 element_plus / antd 之类的包提供, 免得通用包把所有站点都带偏。合并顺序见 loader.DEFAULT_BUILTIN (越靠后越优先), 所以这里的容器模式排在框架容器之后, 只在前面的都没抓到时才兜底。",
+  "description": "框架无关的通用规则包: 只提供 L4 容器通用模式、风险关键词、容器归属提示。L1/L2 表故意留空 —— 它们承载的是具体框架的类名, 由 element_plus / antd 之类的包提供, 免得通用包把所有站点都带偏。合并顺序见 loader.DEFAULT_BUILTIN (越靠后越优先), 所以这里的容器模式排在框架容器之后, 只在前面的都没抓到时才兜底。",
   "l1_rules": {},
   "semantic_hints": [],
   "semantic_candidates": {},
@@ -12,5 +12,29 @@
     "[role=dialog]",
     ".modal",
     "[class*=dialog]"
-  ]
+  ],
+  "risk_keywords": {
+    "destructive": [
+      "删除", "移除", "清除", "清空", "重置", "注销", "解绑", "作废", "禁用",
+      "delete", "remove", "clear", "reset", "destroy", "drop", "revoke"
+    ],
+    "write": [
+      "保存", "提交", "确定", "确认", "新增", "创建", "添加", "修改", "编辑",
+      "导入", "上传", "启用", "批量操作",
+      "save", "submit", "confirm", "ok", "create", "add", "update", "edit",
+      "import", "upload", "enable", "apply"
+    ]
+  },
+  "container_hints": {
+    "dialog": [
+      "[role=dialog]", ".modal", "[class*=dialog]", "[aria-modal=true]",
+      "[class*=modal]", "[class*=drawer]"
+    ],
+    "filter-bar": [
+      "[class*=filter]", "[class*=search]", "[class*=query]", "[role=search]"
+    ],
+    "toolbar": [
+      "[class*=toolbar]", "[class*=btn-group]", "[class*=actions]", "[role=toolbar]"
+    ]
+  }
 }

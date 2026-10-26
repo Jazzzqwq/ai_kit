@@ -54,5 +54,11 @@
     ".ant-modal-content",
     ".ant-modal-wrap",
     ".ant-table-body"
-  ]
+  ],
+  "container_hints": {
+    "dialog": [
+      ".ant-modal",
+      ".ant-drawer"
+    ]
+  }
 }
