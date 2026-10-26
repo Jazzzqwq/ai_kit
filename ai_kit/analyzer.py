@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 
 @dataclass
@@ -46,6 +46,36 @@ CATEGORY_PRODUCT_BUG = "产品缺陷"
 CATEGORY_ENV = "环境问题"
 CATEGORY_SYNTAX = "脚本-语法/导入"
 CATEGORY_UNKNOWN = "未知-待人工分析"
+
+# 六类标签的完整集合: 方案层按它把标签投影成 blame, 少一类就会在那里判成"未知"
+CATEGORIES = (CATEGORY_SCRIPT_HEALER, CATEGORY_SCRIPT_WAIT, CATEGORY_PRODUCT_BUG,
+              CATEGORY_ENV, CATEGORY_SYNTAX, CATEGORY_UNKNOWN)
+
+# LLM 的常见说法 -> 六类标签。按顺序匹配, 命中第一个就停 (与 Phase2 历史行为一致)
+CATEGORY_KEYWORDS: Dict[str, str] = {
+    "定位器": CATEGORY_SCRIPT_HEALER,
+    "等待": CATEGORY_SCRIPT_WAIT,
+    "语法": CATEGORY_SYNTAX,
+    "导入": CATEGORY_SYNTAX,
+    "环境": CATEGORY_ENV,
+    "session": CATEGORY_ENV,
+    "产品": CATEGORY_PRODUCT_BUG,
+    "缺陷": CATEGORY_PRODUCT_BUG,
+    "未知": CATEGORY_UNKNOWN,
+}
+
+
+def normalize_category(raw: str) -> str:
+    """把 LLM 报的分类归一到六类标签; 认不出来原样返回, 由调用方决定要不要用
+
+    Phase2 和方案层的 blame 判定都吃这一张表 —— 关键词表只维护一份, 两边口径
+    不会各说各话。
+    """
+    text = str(raw or "")
+    for keyword, category in CATEGORY_KEYWORDS.items():
+        if keyword in text:
+            return category
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -84,7 +114,10 @@ _RULES: List = [
     (["NoSuchElementException", "Unable to locate element",
       "ElementNotInteractableException", "ElementClickInterceptedException",
       "element not interactable", "click intercepted",
-      "Other element would receive the click"],
+      "Other element would receive the click",
+      # runtime 原语把等待超时统一包成 _Missing("找不到元素: ..."), 这样它也能
+      # 归到定位器而不是掉进"未知"
+      "找不到元素"],
      CATEGORY_SCRIPT_HEALER,
      "定位器失效或元素被遮挡",
      "检查定位器 / Element Plus wrapper / 弹窗残留遮挡",
@@ -181,27 +214,11 @@ def diagnose_with_llm(traceback_text: str, log_text: str = "", screenshot_base64
     if not result:
         return None
 
-    category = str(result.get("category", CATEGORY_UNKNOWN))
+    # 对齐分类标签 (关键词表在模块级, 方案层也用同一张)
+    category = normalize_category(result.get("category", CATEGORY_UNKNOWN))
     confidence = float(result.get("confidence", 0.5))
     summary = str(result.get("summary", ""))
     suggestion = str(result.get("suggestion", ""))
-
-    # 对齐分类标签
-    category_map = {
-        "定位器": CATEGORY_SCRIPT_HEALER,
-        "等待": CATEGORY_SCRIPT_WAIT,
-        "语法": CATEGORY_SYNTAX,
-        "导入": CATEGORY_SYNTAX,
-        "环境": CATEGORY_ENV,
-        "session": CATEGORY_ENV,
-        "产品": CATEGORY_PRODUCT_BUG,
-        "缺陷": CATEGORY_PRODUCT_BUG,
-        "未知": CATEGORY_UNKNOWN,
-    }
-    for kw, std in category_map.items():
-        if kw in category:
-            category = std
-            break
 
     return FailureDiagnosis(
         category=category,

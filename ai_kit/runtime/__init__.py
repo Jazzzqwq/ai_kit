@@ -22,8 +22,9 @@
     AI_KIT_WAIT       显式等待秒数 (默认 10)
     AI_KIT_ARTIFACTS  失败截图目录 (默认 ./artifacts)
 
-proposal.diagnoser 的契约: `diagnose(context: dict) -> str`。模块还没实现时这一
-步静默跳过 —— 归因是加分项, 不能让原语本身挂掉。
+proposal.diagnoser 的契约: `diagnose(context: dict)` 收 _failure() 攒的那份 context
+(见 6.1), 返回值 str() 成一行归因。模块没落地 / 调用抛错都静默降级 —— 归因是加
+分项, 不能让原语本身挂掉。运行时这一路默认不调 LLM (异常处理里不等网络)。
 """
 from __future__ import annotations
 

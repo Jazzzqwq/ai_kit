@@ -13,8 +13,6 @@
 """
 from __future__ import annotations
 
-import sys
-import types
 from pathlib import Path
 
 import pytest
@@ -329,33 +327,50 @@ def test_failure_carries_action_eid_and_a_real_screenshot(live, tmp_path):
     assert isinstance(failure, AssertionError), "pytest 里要是一条失败, 不是异常堆栈"
 
 
-def test_diagnoser_answer_lands_in_the_failure(live, monkeypatch):
-    """proposal.diagnoser 还没落地: 这里塞一个假的, 证明钩子是活的"""
-    fake = types.ModuleType("ai_kit.proposal.diagnoser")
+def test_the_real_diagnoser_lands_in_the_failure(live):
+    """6.1 之后 proposal.diagnoser 真的在了: 找不到元素要归到脚本侧, 并且进失败信息
 
-    def diagnose(context):
-        assert context["action"] == "click"
-        assert context["eid"] == "e9"
+    这里不替换模块 —— 走的就是运行时钩子的真实路径 (dict context -> str)
+    """
+    with pytest.raises(ActionFailure) as excinfo:
+        page.click(Locator("e9", "css selector", "#nope"))
+
+    failure = excinfo.value
+    assert failure.diagnosis.startswith("test_code"), \
+        f"找不到元素是脚本侧问题, 实际: {failure.diagnosis}"
+    assert "脚本-定位器问题" in failure.diagnosis, "一行归因里得看得出分类, 不只一个 blame"
+    assert "归因: " in str(failure)
+    assert "找不到元素" in str(failure), "原因原文不能因为加了归因就不见"
+
+
+def test_an_injected_diagnoser_answer_is_used_as_is(live, monkeypatch):
+    """钩子的契约: diagnose(context: dict) 的返回值 str() 后落进失败信息"""
+    from ai_kit.proposal import diagnoser
+
+    seen = {}
+
+    def fake_diagnose(context):
+        seen.update(context)
         return "按钮被遮罩层挡住"
 
-    fake.diagnose = diagnose
-    monkeypatch.setitem(sys.modules, "ai_kit.proposal.diagnoser", fake)
+    monkeypatch.setattr(diagnoser, "diagnose", fake_diagnose)
 
     with pytest.raises(ActionFailure) as excinfo:
         page.click(Locator("e9", "css selector", "#nope"))
 
     assert excinfo.value.diagnosis == "按钮被遮罩层挡住"
     assert "归因: 按钮被遮罩层挡住" in str(excinfo.value)
+    assert seen["action"] == "click" and seen["eid"] == "e9"
+    assert "driver" in seen, "钩子必须把 driver 交给归因层, 快照只能在这一刻采"
 
 
 def test_a_broken_diagnoser_does_not_eat_the_failure(live, monkeypatch):
-    fake = types.ModuleType("ai_kit.proposal.diagnoser")
+    from ai_kit.proposal import diagnoser
 
-    def diagnose(context):
+    def boom(context):
         raise RuntimeError("归因自己挂了")
 
-    fake.diagnose = diagnose
-    monkeypatch.setitem(sys.modules, "ai_kit.proposal.diagnoser", fake)
+    monkeypatch.setattr(diagnoser, "diagnose", boom)
 
     with pytest.raises(ActionFailure) as excinfo:
         page.assert_text(loc("e5"), "不存在的文案")
