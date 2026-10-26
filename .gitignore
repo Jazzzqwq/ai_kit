@@ -7,6 +7,11 @@ __pycache__/
 .venv/
 .env
 .env.local
+# 任何以 .env 结尾的文件: 覆盖 " .env" / prod.env 这类变体 (多一个空格就是另一个文件名)
+*.env
+
+# IDE (PyCharm 配置不入库)
+.idea/
 
 # 测试/评测产物
 .pytest_cache/
