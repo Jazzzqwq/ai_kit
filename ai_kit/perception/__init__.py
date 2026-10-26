@@ -10,14 +10,18 @@
     planner    : 按原型 + 策略 + 元素清单生成测试计划, 并做约束校验闭环
     renderer   : 计划 -> pytest 源码 (po 模式调用 Page Object / standalone 模式用 runtime 原语)
 
-阶段进度: ① collector 已落地, 其余待做。
+阶段进度: ①② 已落地 (collector / inventory), 其余待做。
 
 用法:
-    from ai_kit.perception import collect
+    from ai_kit.perception import collect, from_inventory
 
-    inv = collect(driver)                       # 内置规则包
-    inv = collect(driver, "example_shop")       # 站点规则包 (风险词/容器提示可覆盖)
-    inv["counts"], inv["dialogs"], inv["risks"]
+    raw = collect(driver)                       # 内置规则包 -> dict
+    raw = collect(driver, "example_shop")       # 站点规则包 (风险词/容器提示可覆盖)
+    raw["counts"], raw["dialogs"], raw["risks"]
+
+    inv = from_inventory(raw)                   # dict -> PageInventory (冻结, eid 引用)
+    inv = from_collect(driver)                  # 采集 + 定型, 一步到位
+    inv.element("e12").selector, inv.fingerprint
 """
 from ai_kit.perception.collector import (
     COLLECT_JS,
@@ -30,15 +34,35 @@ from ai_kit.perception.collector import (
     empty_inventory,
     normalize,
 )
+from ai_kit.perception.inventory import (
+    FINGERPRINT_PREFIX,
+    INVENTORY_VERSION,
+    RISK_LEVELS,
+    ElementSpec,
+    PageInventory,
+    canonical_dom,
+    fingerprint_of,
+    from_collect,
+    from_inventory,
+)
 
 __all__ = [
     "COLLECT_JS",
     "COLLECTOR_VERSION",
     "DEFAULT_MAX_ELEMENTS",
     "DEFAULT_MAX_HTML",
+    "FINGERPRINT_PREFIX",
+    "INVENTORY_VERSION",
     "LOCATOR_ATTRS",
+    "RISK_LEVELS",
+    "ElementSpec",
+    "PageInventory",
     "build_options",
+    "canonical_dom",
     "collect",
     "empty_inventory",
+    "fingerprint_of",
+    "from_collect",
+    "from_inventory",
     "normalize",
 ]

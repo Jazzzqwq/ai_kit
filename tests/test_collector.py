@@ -510,6 +510,16 @@ def test_over_budget_collection_is_grouped(html_page):
     assert any("超过上限" in n for n in inv["notes"])
 
 
+def test_dom_depth_is_recorded(html_page):
+    """清单里唯一能反映页面复杂度的原始信号; 定型层拿它算 stats.max_depth"""
+    inv = collect(html_page(
+        '<button>浅</button><div><div><div><button>深</button></div></div></div>'))
+    depth = {b["text"]: b["depth"] for b in inv["buttons"]}
+
+    assert depth["深"] > depth["浅"]
+    assert depth["浅"] >= 1, "body 的子节点必须在 1 层以上"
+
+
 def test_invisible_content_is_ignored(html_page):
     inv = collect(html_page("""
       <template><button>模板里的</button></template>

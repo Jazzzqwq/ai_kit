@@ -97,6 +97,13 @@ COLLECT_JS = r"""(function (opt) {
     return ATTR_OK[n] === 1 || n.indexOf('aria-') === 0 || n.indexOf('data-test') === 0 ||
            n.indexOf('data-cy') === 0 || n.indexOf('data-qa') === 0 || n.indexOf('data-e2e') === 0;
   }
+  // DOM 深度: 清单里唯一能反映"页面复杂度"的原始信号 (原型分类要看它)。
+  // 采集器只给数, 不给含义 —— 深不深由 archetype 的规则决定。
+  function depthOf(el) {
+    var d = 0, n = el;
+    while (n && n.parentElement) { d++; n = n.parentElement; }
+    return d;
+  }
   function attrMap(el, tag) {
     var out = {}, i, a, n, v;
     for (i = 0; i < el.attributes.length; i++) {
@@ -342,6 +349,7 @@ COLLECT_JS = r"""(function (opt) {
       attrs: a,
       aria: ariaOf(a),
       container: containerOf(el),
+      depth: depthOf(el),
       locator: locs.length ? locs[0] : null,
       alternatives: locs.slice(1),
       constraints: constraintsOf(el, tag, a, type),
@@ -476,6 +484,7 @@ COLLECT_JS = r"""(function (opt) {
       attrs: tattrs,
       aria: ariaOf(tattrs),
       container: containerOf(tn),
+      depth: depthOf(tn),
       locator: tlocs.length ? tlocs[0] : null,
       alternatives: tlocs.slice(1),
       constraints: {},
@@ -661,6 +670,7 @@ def _clean_element(raw: Any, kind: str = "") -> Optional[Dict[str, Any]]:
         "attrs": attrs,
         "aria": _as_dict(raw.get("aria")),
         "container": _as_text(raw.get("container")) or "page",
+        "depth": max(0, _as_int(raw.get("depth"))),
         "locator": locator,
         "alternatives": alternatives,
         "constraints": _as_dict(raw.get("constraints")),
