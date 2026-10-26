@@ -26,7 +26,7 @@ except Exception:  # 允许把 client.py 单独拷进别的项目使用
 # ---------------------------------------------------------------------------
 # Token 用量回填 (供评测算成本; 向后兼容, 不影响 chat/chat_json 返回值)
 # ---------------------------------------------------------------------------
-_LAST_USAGE: Dict[str, Any] = {}          # 最近一次 chat 的 usage
+_LAST_USAGE: Dict[str, Any] = {}          # 最近一次拿到响应的 usage; 调用失败不清空(保留上次成功值)
 _CUMULATIVE_USAGE: Dict[str, int] = {     # 进程内累计 (评测按增量算每条 case 成本)
     "prompt_tokens": 0,
     "completion_tokens": 0,
@@ -45,19 +45,28 @@ def get_cumulative_usage() -> Dict[str, int]:
     return dict(_CUMULATIVE_USAGE)
 
 
-def _record_usage(data: Dict[str, Any]) -> None:
+def _as_int(value: Any) -> int:
+    """把 usage 字段转成 int; 缺失或非数字 (如 "n/a") 一律当 0, 不让脏 usage 拖垮 chat"""
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _record_usage(data: Any) -> None:
     """从 chat completions 响应体里提取 usage, 写入 last + cumulative"""
     global _LAST_USAGE
-    usage = (data or {}).get("usage") or {}
+    # usage 缺失/不是 dict/字段是脏值 都要能活下来: 回填是旁路, 不能反过来让 chat 返回 None
+    usage = data.get("usage") if isinstance(data, dict) else None
+    if not isinstance(usage, dict):
+        usage = {}
     _LAST_USAGE = dict(usage)
     if usage:
-        _CUMULATIVE_USAGE["prompt_tokens"] += int(usage.get("prompt_tokens", 0) or 0)
-        _CUMULATIVE_USAGE["completion_tokens"] += int(usage.get("completion_tokens", 0) or 0)
-        _CUMULATIVE_USAGE["total_tokens"] += int(usage.get("total_tokens", 0) or 0)
-        _CUMULATIVE_USAGE["calls"] += 1
-    else:
-        # 有响应但无 usage 字段: 至少记一次调用, 成本记为不可换算
-        _CUMULATIVE_USAGE["calls"] += 1
+        _CUMULATIVE_USAGE["prompt_tokens"] += _as_int(usage.get("prompt_tokens"))
+        _CUMULATIVE_USAGE["completion_tokens"] += _as_int(usage.get("completion_tokens"))
+        _CUMULATIVE_USAGE["total_tokens"] += _as_int(usage.get("total_tokens"))
+    # 有响应就算一次调用 (无 usage 时 token 记 0, 成本换算为 n/a)
+    _CUMULATIVE_USAGE["calls"] += 1
 
 
 # ---------------------------------------------------------------------------
@@ -104,8 +113,8 @@ def chat(messages: List[Dict[str, str]],
                 timeout=cfg.get("timeout", 15))
             if resp.status_code == 200:
                 data = resp.json()
-                _record_usage(data if isinstance(data, dict) else {})
-                choices = data.get("choices", [])
+                _record_usage(data)      # 旁路回填, 不影响下面的返回值
+                choices = data.get("choices", []) if isinstance(data, dict) else []
                 if choices:
                     content = choices[0].get("message", {}).get("content", "")
                     return content.strip()
@@ -170,10 +179,6 @@ def chat_json(system_prompt: str, user_prompt: str,
 
 
 # ---------------------------------------------------------------------------
-# 测试连通性
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
 # 多模态: 带图片调用
 # ---------------------------------------------------------------------------
 
@@ -232,6 +237,10 @@ def chat_json_with_image(system_prompt: str,
     print(f"  [LLM-Vision] JSON parse failed, raw[:200]={raw[:200]}")
     return None
 
+
+# ---------------------------------------------------------------------------
+# 测试连通性
+# ---------------------------------------------------------------------------
 
 def test_connection() -> bool:
     """发一条最简单的消息, 返回 True 表示 LLM 可用"""
