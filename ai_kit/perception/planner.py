@@ -33,8 +33,9 @@
 diagnostics (missing / skipped / unresolved / problems) 不进 to_dict: 卡片 schema
 是 ⑥ 的输入契约, 不该为未知键做兼容; 要看诊断请用 plan.report()。
 
-缓存键: plan_cache_key() = 指纹 + inventory/strategy/planner 三个版本 + 原型。
-改了步骤模板却复用旧计划, 比重新生成一次贵得多。
+缓存键: plan_cache_key() = 指纹 + profile + model + inventory/strategy/planner 三个
+版本 + 原型。改了步骤模板却复用旧计划, 比重新生成一次贵得多; 换了规则包或模型还
+复用旧计划, 等于拿上一份答案交这一份卷 (5.9 的缓存键就是为这两件事加的)。
 """
 from __future__ import annotations
 
@@ -48,6 +49,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 from urllib.parse import urlsplit
 
+from ai_kit.ledger import BudgetExceeded
 from ai_kit.perception.archetype import classify
 from ai_kit.perception.inventory import ElementSpec, PageInventory, from_inventory
 from ai_kit.perception.strategies import (
@@ -1709,17 +1711,25 @@ def plan(inventory: Any, *, page: Optional[str] = None, archetype: str = "",
                     diagnostics=diagnostics)
 
 
-def plan_cache_key(inventory: Any, archetype: str = "") -> str:
-    """缓存键: 页面结构 + 三份版本 + 原型。改模板/改词表都必须换键
+def plan_cache_key(inventory: Any, archetype: str = "", *, profile: str = "",
+                   model: str = "", prompt_version: str = "") -> str:
+    """缓存键: 指纹 + profile + model + 三份版本 + 原型 (卡片 5.9)
 
     原型跟 plan() 同一口径 (空/未知就地规则分类) —— 键里写 unknown 而计划按
     list_crud 生成, 缓存就会把两份不相干的东西当成一份。
+
+    profile / model 空串 = 「和 plan() 同一口径」, 现场从环境解析; 回读缓存时按文件
+    里存的成分比对, 不靠「读的时候环境还没被改」这种运气。
     """
     inv = inventory if isinstance(inventory, PageInventory) else from_inventory(inventory)
     name = str(archetype or inv.archetype or "").strip().lower()
     if name not in CHECKLISTS:
         name = classify(inv).archetype
-    return f"{inv.fingerprint}|strategy=v{STRATEGY_VERSION}|planner={PLANNER_VERSION}|{name}"
+    owner = str(profile or _profile_name())
+    engine = str(model or _model_name())
+    version = str(prompt_version or PLANNER_VERSION)
+    return (f"{inv.fingerprint}|profile={owner}|model={engine}"
+            f"|strategy=v{STRATEGY_VERSION}|planner={version}|{name}")
 
 
 # ---------------------------------------------------------------------------
@@ -1832,6 +1842,9 @@ def plan_with_llm(inventory: Any, *, ask: Optional[Callable[[str], Any]] = None,
 
     try:
         answer = (ask or _ask_llm)(_llm_prompt(inv, base, pool))
+    except BudgetExceeded:
+        # 预算用完不是「LLM 抽风」: 吞成「用确定性步骤」就等于钱花完了却没人知道
+        raise
     except Exception as exc:                # noqa: BLE001 — LLM 是增强, 挂了不影响主流程
         diagnostics["llm"] = f"调用失败, 用确定性步骤: {exc}"
         diagnostics["problems"] = problems
@@ -2706,6 +2719,9 @@ def plan_verified(inventory: Any, *, ask: Optional[Callable[[str], Any]] = None,
         targets = [case for case in current.cases if case.case_id in pending]
         try:
             answer = ask(_llm_prompt(inv, current, targets, errors=pending))
+        except BudgetExceeded:
+            # 预算用完: 直接停, 不把它降级成「这一轮 LLM 抽风, 换下一轮」
+            raise
         except Exception as exc:                # noqa: BLE001 — LLM 挂了不该让闭环崩
             attempts.append(f"第 {attempt} 轮: 调用失败 ({exc})")
             break

@@ -14,6 +14,9 @@
 ⑥ renderer 也已落地 (po / standalone 双模式, 产物先过 ③ 的 AST 白名单才交出)。
 ⑤ 的校验闭环 (5.7) 内置在 planner: schema -> 活页面 -> AST 白名单 -> 去重,
 不过的用例标 needs_review, 不阻塞其他用例; renderer 自己拒收的用例同样进 ③。
+5.9 的成本与缓存: plan_cached 把校验完的计划存进 plans/<fingerprint>.json, 键含
+指纹 + profile + model + 提示词版本; 命中直接复用, 未命中才算钱 (ai_kit.ledger 管预算
+与 runs.jsonl 记账)。
 
 用法:
     from ai_kit.perception import collect, from_inventory, classify, annotate, expand, plan
@@ -50,6 +53,13 @@
     render(p, mode="po", po=PoPage(              # po 模式: 动作 -> PO 方法, 映射表由人给
         module="pages.patient_list", cls="PatientListPage",
         mapping={"fill": "search_by_name($value)"}, methods=("search_by_name",)))
+
+    from ai_kit.ledger import Budget, RunLedger
+    from ai_kit.perception import plan_cached
+
+    p = plan_cached(inv, render=render, ask=client.chat_json,   # 命中缓存就不调模型
+                    budget=Budget(0.5), ledger=RunLedger())     # 超 0.5 元即停
+    p.diagnostics["cache"]                                      # 命中/未命中 都有一行说明
 """
 from ai_kit.perception.archetype import (
     ARCHETYPES,
@@ -58,6 +68,18 @@ from ai_kit.perception.archetype import (
     annotate,
     classify,
     confirm_with_llm,
+)
+from ai_kit.perception.cache import (
+    CACHE_VERSION,
+    DEFAULT_PLANS_DIR,
+    cache_filename,
+    cache_key,
+    load_plan,
+    plan_cache_path,
+    plan_cached,
+    plan_payload,
+    plans_dir,
+    save_plan,
 )
 from ai_kit.perception.collector import (
     COLLECT_JS,
@@ -152,6 +174,7 @@ from ai_kit.perception.strategies import (
 __all__ = [
     "ACTIONS",
     "ARCHETYPES",
+    "CACHE_VERSION",
     "CASE_KEYS",
     "CHECKLISTS",
     "COLLECT_JS",
@@ -159,6 +182,7 @@ __all__ = [
     "DEFAULT_DRIVER_FIXTURE",
     "DEFAULT_MAX_ELEMENTS",
     "DEFAULT_MAX_HTML",
+    "DEFAULT_PLANS_DIR",
     "DUP_THRESHOLD",
     "FINGERPRINT_PREFIX",
     "INVENTORY_VERSION",
@@ -200,6 +224,8 @@ __all__ = [
     "build_cases",
     "build_locators",
     "build_options",
+    "cache_filename",
+    "cache_key",
     "canonical_dom",
     "case_from_dict",
     "case_schema_problems",
@@ -219,17 +245,23 @@ __all__ = [
     "from_inventory",
     "groups",
     "lint_source",
+    "load_plan",
     "make_renderer",
     "normalize",
     "normalize_title",
     "plan",
     "plan_cache_key",
+    "plan_cache_path",
+    "plan_cached",
     "plan_from_dict",
+    "plan_payload",
     "plan_verified",
     "plan_with_llm",
+    "plans_dir",
     "po_methods_from_dir",
     "render",
     "resolve_ref",
+    "save_plan",
     "validate_case",
     "validate_schema",
     "validate_step",

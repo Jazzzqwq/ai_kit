@@ -12,6 +12,7 @@ ai_kit — 可移植的 Web UI 测试 AI 工具箱
 
     client.py    LLM 客户端 (OpenAI Chat Completions 兼容, 多模态, usage 回填)
     config.py    Provider 配置 (密钥走环境变量) + 单价表
+    ledger.py    成本账本: 预算上限 + 每次调用记账 (runs.jsonl)
     analyzer.py  失败归因门面: 规则优先 -> LLM 降级
     healer.py    分层自愈定位器: L1 规则 -> L2 语义 CSS -> L3 相对 XPath -> L4 LLM
 
@@ -59,6 +60,11 @@ _LAZY: dict[str, tuple[str, str]] = {
     "resolve_profile": ("ai_kit.profiles", "resolve_profile"),
     "merge_profiles": ("ai_kit.profiles", "merge_profiles"),
     "effective_rules": ("ai_kit.profiles", "effective_rules"),
+    # ledger: 预算与记账
+    "Budget": ("ai_kit.ledger", "Budget"),
+    "BudgetExceeded": ("ai_kit.ledger", "BudgetExceeded"),
+    "RunLedger": ("ai_kit.ledger", "RunLedger"),
+    "meter": ("ai_kit.ledger", "meter"),
 }
 
 __all__ = sorted(_LAZY)
