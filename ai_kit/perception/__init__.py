@@ -10,10 +10,10 @@
     planner    : 按原型 + 策略 + 元素清单生成测试计划, 并做约束校验闭环
     renderer   : 计划 -> pytest 源码 (po 模式调用 Page Object / standalone 模式用 runtime 原语)
 
-阶段进度: ① collect / ② inventory / ③ archetype / ④ strategies 已落地, 其余待做。
+阶段进度: ① collect / ② inventory / ③ archetype / ④ strategies / ⑤ planner 已落地, renderer 待做。
 
 用法:
-    from ai_kit.perception import collect, from_inventory, classify, annotate, expand
+    from ai_kit.perception import collect, from_inventory, classify, annotate, expand, plan
 
     raw = collect(driver)                       # 内置规则包 -> dict
     raw = collect(driver, "example_shop")       # 站点规则包 (风险词/容器提示可覆盖)
@@ -29,6 +29,11 @@
 
     exp = expand(inv)                           # 策略清单 -> 用例种子 (eid 级)
     exp.cases, exp.missing, exp.stats
+
+    p = plan(inv)                               # 用例种子 -> 结构化动作计划 (卡片 5.6)
+    p.to_dict()["cases"][0]["steps"]            # [{'action': 'fill', 'eid': 'e12', 'value': ...}, ...]
+    p.report()                                  # 缺项/跳过/未解析/校验问题 (不进 JSON)
+    plan_with_llm(inv)                          # 可选: LLM 改步骤, 过了校验才落地
 """
 from ai_kit.perception.archetype import (
     ARCHETYPES,
@@ -60,6 +65,22 @@ from ai_kit.perception.inventory import (
     from_collect,
     from_inventory,
 )
+from ai_kit.perception.planner import (
+    ACTIONS,
+    PLANNER_VERSION,
+    PRIORITIES,
+    CaseBundle,
+    PlanCase,
+    Step,
+    TestPlan,
+    build_cases,
+    plan,
+    plan_cache_key,
+    plan_with_llm,
+    resolve_ref,
+    validate_case,
+    validate_step,
+)
 from ai_kit.perception.strategies import (
     CHECKLISTS,
     STRATEGY_VERSION,
@@ -77,6 +98,7 @@ from ai_kit.perception.strategies import (
 )
 
 __all__ = [
+    "ACTIONS",
     "ARCHETYPES",
     "CHECKLISTS",
     "COLLECT_JS",
@@ -87,18 +109,25 @@ __all__ = [
     "INVENTORY_VERSION",
     "LLM_CONFIDENCE_THRESHOLD",
     "LOCATOR_ATTRS",
+    "PLANNER_VERSION",
+    "PRIORITIES",
     "RISK_LEVELS",
     "STRATEGY_VERSION",
     "TARGETS",
     "ArchetypeResult",
     "Binding",
+    "CaseBundle",
     "CaseSeed",
     "ElementSpec",
     "Expansion",
     "PageInventory",
+    "PlanCase",
+    "Step",
     "Strategy",
+    "TestPlan",
     "Variant",
     "annotate",
+    "build_cases",
     "build_options",
     "canonical_dom",
     "checklist",
@@ -114,4 +143,10 @@ __all__ = [
     "from_inventory",
     "groups",
     "normalize",
+    "plan",
+    "plan_cache_key",
+    "plan_with_llm",
+    "resolve_ref",
+    "validate_case",
+    "validate_step",
 ]

@@ -227,6 +227,7 @@ class CaseSeed:
     strategy: str
     title: str
     ref: str
+    variant: str = ""                          # 变体 key: ⑤ 据此细分步骤 (卡片没有, 但比拆 cid 可靠)
     label: str = ""
     kind: str = ""
     refs: Tuple[str, ...] = ()
@@ -242,7 +243,8 @@ class CaseSeed:
 
     def to_dict(self) -> Dict[str, Any]:
         return {"cid": self.cid, "group": self.group, "strategy": self.strategy,
-                "title": self.title, "ref": self.ref, "label": self.label,
+                "variant": self.variant, "title": self.title, "ref": self.ref,
+                "label": self.label,
                 "kind": self.kind, "refs": list(self.refs), "data": dict(self.data),
                 "expect": list(self.expect), "priority": self.priority,
                 "risk": self.risk, "note": self.note}
@@ -1103,6 +1105,7 @@ def _seed(archetype: str, strategy: Strategy, binding: Binding, variant: Variant
         strategy=strategy.key,
         title=f"{strategy.title} · {binding.label} · {variant.title}",
         ref=binding.ref,
+        variant=variant.key,
         label=binding.label,
         kind=binding.kind,
         refs=binding.refs,
