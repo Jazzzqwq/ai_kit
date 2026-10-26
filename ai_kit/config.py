@@ -18,8 +18,12 @@ LLM Provider 配置 — 密钥只从环境变量 / 本地 .env 读取
     QIANWEN_API_KEY=sk-xxxx
 
 自检:
-    python -m ai_kit.config            # 打印解析后的配置 (key 掩码), 不联网
+    python -m ai_kit.config            # 打印解析后的配置 (key 掩码) + 单价, 不联网
     python -m ai_kit.config --ping     # 真调一次 LLM 做连通性测试 (消耗极少 token)
+
+价目表:
+    PRICE_TABLE 按 **model** 索引 (元 / 1K token), 快照月份见 PRICE_TABLE_SNAPSHOT。
+    未收录的 model 不报错, get_price() 返回 (None, None), 评测把成本记成 n/a。
 """
 
 import os
@@ -67,17 +71,15 @@ def _env(name: str) -> str:
 # ====== 当前使用的 provider (可用环境变量 AI_ACTIVE_PROVIDER 覆盖) ======
 ACTIVE_PROVIDER = _env("AI_ACTIVE_PROVIDER") or "qianwen"
 
-# 静态档案: 只有 endpoint / model / timeout / 价目, **不含任何 key**。
+# 静态档案: 只有 endpoint / model / timeout, **不含任何 key, 也不含价目**
+# (价目按 model 查下方 PRICE_TABLE —— 同一家换 model 单价就变)。
 # requires_api_key=False 表示本地服务 (ollama) 无鉴权, 只要 base_url + model 就绪即可用。
-# 价目单位: 元 / 1K token — 供评测模块算"每次成本", 不填则成本记为 n/a。
 PROVIDERS: Dict[str, Dict[str, Any]] = {
     # --- DeepSeek ---
     "deepseek": {
         "base_url": "https://api.deepseek.com/v1",
         "model": "deepseek-chat",
         "timeout": 15,
-        "price_per_1k_input": 0.001,
-        "price_per_1k_output": 0.002,
     },
 
     # --- 豆包 (火山方舟: model 填你创建的 endpoint id, ep-xxxxx) ---
@@ -93,8 +95,6 @@ PROVIDERS: Dict[str, Dict[str, Any]] = {
         "model": "qwen2.5:7b",
         "timeout": 60,          # 本地模型可能慢, 给多点时间
         "requires_api_key": False,
-        "price_per_1k_input": 0.0,   # 本地免费
-        "price_per_1k_output": 0.0,
     },
 
     # --- qianwen ---
@@ -102,10 +102,53 @@ PROVIDERS: Dict[str, Dict[str, Any]] = {
         "base_url": "https://maas.qianwenaiapi.com/compatible-mode/v1",
         "model": "qwen-plus",
         "timeout": 30,
-        "price_per_1k_input": 0.0008,
-        "price_per_1k_output": 0.002,
     },
 }
+
+
+# ---------------------------------------------------------------------------
+# 价目表 (元 / 1K token, 按 model 索引)
+# ---------------------------------------------------------------------------
+# 为什么按 model 而不按 provider: 同一家换 model 单价就变 (qwen-plus vs qwen-max),
+# 而 {PROVIDER}_MODEL 本来就允许用环境变量覆盖 —— 按 provider 记价会在换模型后算错钱。
+# 字段: "in" = 输入 (缓存未命中), "out" = 输出; 单位元 / 1000 token。
+
+PRICE_TABLE_SNAPSHOT = "2026-10"        # 价格快照月份 (YYYY-MM), 涨价/降价后请同步改
+PRICE_TABLE_SOURCE = (
+    "阿里云百炼 (qwen-plus) / DeepSeek 开放平台 (deepseek-chat) 官方定价页快照; "
+    "数值迁移自本仓库原有内嵌价目, 未逐条向厂商复核——只用于成本估算, 不要拿来对账"
+)
+
+PRICE_TABLE: Dict[str, Dict[str, float]] = {
+    # --- 阿里云百炼 ---
+    "qwen-plus":     {"in": 0.0008, "out": 0.002},
+    # --- DeepSeek ---
+    "deepseek-chat": {"in": 0.001,  "out": 0.002},
+    # --- 本地 Ollama: 自己跑, 不计费 ---
+    "qwen2.5:7b":    {"in": 0.0,    "out": 0.0},
+}
+
+# 模型名的版本后缀分隔符: qwen-plus-2025-04-28 / qwen2.5:7b-instruct-q4_K_M
+_MODEL_SUFFIX_SEPS = ("-", ":", "/", "@")
+
+
+def price_for_model(model: str) -> Optional[Dict[str, float]]:
+    """按 model 名查价目 (元/1K), 未收录返回 None。
+
+    支持带版本后缀的 model 名 (取最长前缀):
+        qwen-plus-2025-04-28          -> qwen-plus
+        qwen2.5:7b-instruct-q4_K_M    -> qwen2.5:7b
+    """
+    name = (model or "").strip().lower()
+    if not name:
+        return None
+    if name in PRICE_TABLE:
+        return dict(PRICE_TABLE[name])
+    hits = [key for key in PRICE_TABLE
+            if any(name.startswith(key + sep) for sep in _MODEL_SUFFIX_SEPS)]
+    if not hits:
+        return None
+    return dict(PRICE_TABLE[max(hits, key=len)])
 
 
 # ---------------------------------------------------------------------------
@@ -188,20 +231,35 @@ def available_providers() -> List[str]:
     return [name for name in sorted(PROVIDERS) if _usable(name)]
 
 
+def _model_of(provider_name: str) -> str:
+    """该 provider 解析后的 model (含 {PROVIDER}_MODEL 环境覆盖); 未知 provider 返回空串"""
+    try:
+        cfg = _profile(provider_name)
+    except Exception:  # noqa: BLE001
+        return ""
+    return _env(f"{provider_name.upper()}_MODEL") or cfg.get("model", "")
+
+
 def get_price(provider: Optional[str] = None) -> tuple:
     """
-    返回该 provider 的 (每1K输入元, 每1K输出元)。
-    未配置价目 → 返回 (None, None), 评测会把成本标记为 n/a。
+    返回该 provider 当前 model 的 (每1K输入元, 每1K输出元)。
+
+    价格按 model 查 PRICE_TABLE, 所以 {PROVIDER}_MODEL 覆盖后单价会跟着换
+    (旧版把价目记在 provider 上, 换模型后仍按旧价算, 会算错钱)。
+    未收录的 model / 未知 provider → (None, None), 评测把成本标记为 n/a。
     """
-    try:
-        cfg = _profile((provider or active_provider()).strip())
-    except Exception:  # noqa: BLE001
+    entry = price_for_model(_model_of((provider or active_provider()).strip()))
+    if not entry:
         return (None, None)
-    pin = cfg.get("price_per_1k_input")
-    pout = cfg.get("price_per_1k_output")
-    if pin is None or pout is None:
-        return (None, None)
-    return (float(pin), float(pout))
+    return (float(entry["in"]), float(entry["out"]))
+
+
+def _price_label(provider_name: str) -> str:
+    """自检输出用: 单价一行字"""
+    pin, pout = get_price(provider_name)
+    if pin is None:
+        return "未收录(成本记 n/a)"
+    return f"in={pin} out={pout} 元/1K"
 
 
 def masked_config(provider: Optional[str] = None) -> dict:
@@ -232,12 +290,13 @@ def mask_key(key: str) -> str:
 def _selfcheck(ping: bool = False) -> int:
     print(f"当前 provider : {active_provider()}")
     print(f".env 候选路径 : {os.path.join(os.getcwd(), '.env')} (存在: {os.path.isfile(os.path.join(os.getcwd(), '.env'))})")
-    print("\n各 provider 解析状态 (key 掩码):")
+    print(f"\n各 provider 解析状态 (key 掩码; 单价快照 {PRICE_TABLE_SNAPSHOT}):")
     for name in sorted(PROVIDERS):
         cfg = masked_config(name)
         state = "可用" if _usable(name) else "缺项"
         key_state = cfg["api_key"] or ("无需 key" if not cfg.get("requires_api_key", True) else "未配置")
-        print(f"  - {name:<9} {state:<4} key={key_state:<14} model={cfg['model'] or '(未填)'} base_url={cfg['base_url'] or '(未填)'}")
+        print(f"  - {name:<9} {state:<4} key={key_state:<14} model={cfg['model'] or '(未填)'}")
+        print(f"    {'':<9} 单价={_price_label(name)}  base_url={cfg['base_url'] or '(未填)'}")
 
     if not ping:
         print("\n连通性测试: python -m ai_kit.config --ping")
