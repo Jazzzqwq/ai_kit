@@ -40,6 +40,17 @@ def _element_target(driver, by_const: str, locator: str) -> Optional[str]:
         return None
 
 
+def _llm_client(use_llm: bool):
+    """把 use_llm 开关翻译成注入式客户端; 不可用则 None (评测依旧离线可复现)"""
+    if not use_llm:
+        return None
+    try:
+        from ai_kit.client import chat_json, llm_available
+    except Exception:  # noqa: BLE001
+        return None
+    return chat_json if llm_available() else None
+
+
 def run(use_llm: bool = False, driver=None) -> Dict[str, Any]:
     """
     执行自愈评测。driver 可由 run_eval 共享注入; 为 None 时自建, 建不了则 SKIPPED。
@@ -62,6 +73,7 @@ def run(use_llm: bool = False, driver=None) -> Dict[str, Any]:
     candidate_hits_series: List[List[bool]] = []
     layer_hits = {"L1": 0, "L2": 0, "L3": 0, "L4": 0}
     winner_layer_none = 0
+    llm_client = _llm_client(use_llm)
 
     try:
         for c in cases:
@@ -71,20 +83,20 @@ def run(use_llm: bool = False, driver=None) -> Dict[str, Any]:
             broken_by = _BY_MAP.get(c["broken_by"], By.CSS_SELECTOR)
             cands = rank_candidates(
                 driver, broken_by, c["broken_locator"],
-                intent=c.get("intent", ""), use_llm=use_llm,
+                intent=c.get("intent", ""), llm_client=llm_client,
             )
 
             expected_target = c["expected_target"]
             hits: List[bool] = []
             winner_rank = None
             winner_layer = None
-            for idx, (by, loc, conf, layer) in enumerate(cands):
-                t = _element_target(driver, by, loc)
+            for idx, cand in enumerate(cands):
+                t = _element_target(driver, cand.by, cand.locator)
                 hit = (t is not None and t == expected_target)
                 hits.append(hit)
                 if hit and winner_rank is None:
                     winner_rank = idx
-                    winner_layer = layer
+                    winner_layer = cand.layer
 
             candidate_hits_series.append(hits)
             if winner_layer:
@@ -100,8 +112,8 @@ def run(use_llm: bool = False, driver=None) -> Dict[str, Any]:
                 "layer_hint": c.get("layer_hint"),
                 "top1_hit": metrics.top_k_hit(hits, 1),
                 "top3_hit": metrics.top_k_hit(hits, 3),
-                "candidates": [(by, loc, round(conf, 2), layer)
-                                for by, loc, conf, layer in cands[:6]],
+                "candidates": [(cand.by, cand.locator, round(cand.confidence, 2), cand.layer)
+                                for cand in cands[:6]],
             })
     finally:
         if own_driver:
