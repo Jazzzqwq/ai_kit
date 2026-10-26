@@ -10,10 +10,10 @@
     planner    : 按原型 + 策略 + 元素清单生成测试计划, 并做约束校验闭环
     renderer   : 计划 -> pytest 源码 (po 模式调用 Page Object / standalone 模式用 runtime 原语)
 
-阶段进度: ① collect / ② inventory / ③ archetype 已落地, 其余待做。
+阶段进度: ① collect / ② inventory / ③ archetype / ④ strategies 已落地, 其余待做。
 
 用法:
-    from ai_kit.perception import collect, from_inventory, classify, annotate
+    from ai_kit.perception import collect, from_inventory, classify, annotate, expand
 
     raw = collect(driver)                       # 内置规则包 -> dict
     raw = collect(driver, "example_shop")       # 站点规则包 (风险词/容器提示可覆盖)
@@ -26,6 +26,9 @@
     result = classify(inv)                      # 原型分类 (纯规则, 0 成本)
     result.archetype, result.confidence, result.evidence
     inv = annotate(inv)                         # 回填 inv.archetype, 指纹不变
+
+    exp = expand(inv)                           # 策略清单 -> 用例种子 (eid 级)
+    exp.cases, exp.missing, exp.stats
 """
 from ai_kit.perception.archetype import (
     ARCHETYPES,
@@ -57,9 +60,25 @@ from ai_kit.perception.inventory import (
     from_collect,
     from_inventory,
 )
+from ai_kit.perception.strategies import (
+    CHECKLISTS,
+    STRATEGY_VERSION,
+    TARGETS,
+    Binding,
+    CaseSeed,
+    Expansion,
+    Strategy,
+    Variant,
+    checklist,
+    describe,
+    expand,
+    find,
+    groups,
+)
 
 __all__ = [
     "ARCHETYPES",
+    "CHECKLISTS",
     "COLLECT_JS",
     "COLLECTOR_VERSION",
     "DEFAULT_MAX_ELEMENTS",
@@ -69,18 +88,30 @@ __all__ = [
     "LLM_CONFIDENCE_THRESHOLD",
     "LOCATOR_ATTRS",
     "RISK_LEVELS",
+    "STRATEGY_VERSION",
+    "TARGETS",
     "ArchetypeResult",
+    "Binding",
+    "CaseSeed",
     "ElementSpec",
+    "Expansion",
     "PageInventory",
+    "Strategy",
+    "Variant",
     "annotate",
     "build_options",
     "canonical_dom",
+    "checklist",
     "classify",
     "collect",
     "confirm_with_llm",
+    "describe",
     "empty_inventory",
+    "expand",
+    "find",
     "fingerprint_of",
     "from_collect",
     "from_inventory",
+    "groups",
     "normalize",
 ]
