@@ -25,6 +25,7 @@ version = {attr = "ai_kit.__version__"}
 include = ["ai_kit*"]
 
 [tool.setuptools.package-data]
+"ai_kit" = ["py.typed"]
 "ai_kit.evaluation" = ["golden/*.json", "golden/fixtures/*.html"]
 "ai_kit.profiles" = ["builtin/*.json", "sites/*.json"]
 
