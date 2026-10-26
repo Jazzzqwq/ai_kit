@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "name": "generic",
+  "description": "框架无关的通用规则包: 只提供 L4 容器通用模式。L1/L2 表故意留空 —— 它们承载的是具体框架的类名, 由 element_plus / antd 之类的包提供, 免得通用包把所有站点都带偏。合并顺序见 loader.DEFAULT_BUILTIN (越靠后越优先), 所以这里的容器模式排在框架容器之后, 只在前面的都没抓到时才兜底。",
+  "l1_rules": {},
+  "semantic_hints": [],
+  "semantic_candidates": {},
+  "intent_keywords": {},
+  "intent_selectors": {},
+  "l3_containers": [],
+  "l4_containers": [
+    "[role=dialog]",
+    ".modal",
+    "[class*=dialog]"
+  ]
+}

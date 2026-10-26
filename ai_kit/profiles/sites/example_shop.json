@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "name": "example_shop",
+  "description": "示例站点 profile: 演示站点知识如何覆盖框架内置规则包。真实项目请另存为 <站点名>.json —— .gitignore 已忽略 sites/*.json, 只放行 example_*.json, 因为站点 profile 里经常出现内网路径、测试账号、业务类名。",
+  "l1_rules": {
+    "body > div.el-message-box": {
+      "by": "css selector",
+      "locator": ".shop-message-box",
+      "reason": "本站把 Element Plus 的弹窗根节点换成了自己的 class"
+    }
+  },
+  "semantic_candidates": {
+    "table": [
+      ".shop-grid .el-table__body"
+    ]
+  },
+  "intent_keywords": {
+    "confirm": ["确认下单", "去支付"],
+    "cancel": ["再想想"]
+  },
+  "l4_containers": [
+    ".filter-card",
+    ".shop-grid"
+  ]
+}

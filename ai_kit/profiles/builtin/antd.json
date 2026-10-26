@@ -1,0 +1,58 @@
+{
+  "schema": 1,
+  "name": "antd",
+  "description": "Ant Design (React) 规则包: 演示框架适配 —— 只换一个规则包就能让同一套自愈逻辑认识 .ant-modal / .ant-table / .ant-select。默认规则包不含本包, 需要时显式传 profile='antd' (或 load_profile('antd'))。",
+  "l1_rules": {
+    "body > div.ant-modal": {
+      "by": "css selector",
+      "locator": ".ant-modal",
+      "reason": "antd Modal 挂到 .ant-modal-wrap 里, 不是 body 的直系子节点"
+    },
+    ".ant-modal-footer button.ant-btn-primary": {
+      "by": "css selector",
+      "locator": ".ant-modal-footer .ant-btn-primary, .ant-modal-confirm-btns .ant-btn-primary",
+      "reason": "antd 确认弹窗有两种 footer, 主按钮位置不同"
+    }
+  },
+  "semantic_hints": [
+    ["\\.ant-modal|ant-modal", "dialog"],
+    ["ant-table", "table"],
+    ["ant-select|ant-dropdown", "select"]
+  ],
+  "semantic_candidates": {
+    "dialog": [
+      ".ant-modal",
+      ".ant-modal-wrap .ant-modal",
+      ".ant-modal-content"
+    ],
+    "table": [
+      ".ant-table-body",
+      ".ant-table-content table",
+      ".ant-table .ant-table-container"
+    ],
+    "select": [
+      ".ant-select-selector",
+      ".ant-select .ant-select-selection-search-input"
+    ]
+  },
+  "intent_keywords": {
+    "confirm": ["确定", "confirm", "ok", "yes", "delete"],
+    "cancel": ["取消", "cancel", "no"],
+    "close": ["关闭", "close"]
+  },
+  "intent_selectors": {
+    "confirm": ".ant-modal-confirm-btns .ant-btn-primary, .ant-modal-footer .ant-btn-primary, .ant-modal-confirm-btns button:last-child",
+    "cancel": ".ant-modal-confirm-btns .ant-btn:not(.ant-btn-primary), .ant-modal-footer .ant-btn:not(.ant-btn-primary)",
+    "close": ".ant-modal-close"
+  },
+  "l3_containers": [
+    ".ant-modal",
+    ".ant-modal-wrap"
+  ],
+  "l4_containers": [
+    ".ant-modal",
+    ".ant-modal-content",
+    ".ant-modal-wrap",
+    ".ant-table-body"
+  ]
+}

@@ -3,6 +3,9 @@
 AI 自愈定位器 — Locator Healer (Phase 1 本地版)
 分层自愈策略: L1 规则映射 → L2 多语义 CSS → L3 相对 XPath
 不依赖 LLM, 所有规则本地可解释可调试
+
+规则全部外置在 ai_kit/profiles/builtin/*.json (generic 打底 + element_plus 覆盖),
+站点差异用 profile 覆盖。本模块只负责"怎么用规则", 不再持有"有哪些规则"。
 """
 from __future__ import annotations
 
@@ -11,37 +14,65 @@ import os
 import re
 import time
 from dataclasses import dataclass
-from functools import partial
+from functools import lru_cache, partial
 from typing import List, Optional, Tuple, Dict, Any
 
 from selenium.webdriver.common.by import By
 from selenium.webdriver.remote.webdriver import WebDriver
 from selenium.webdriver.remote.webelement import WebElement
 
+from ai_kit.profiles import default_rules, effective_rules
+
 
 # ---------------------------------------------------------------------------
-# L1: 规则映射表 — 积累你踩过的坑, 命中直接替换
+# 规则读法 — 数据在 ai_kit/profiles/builtin/*.json, 这里只管怎么解释它
+#   规则包写错一律当没有 (缺键/类型不对/单条畸形), 绝不让自愈链路上抛
 # ---------------------------------------------------------------------------
-L1_RULES: Dict[str, Tuple[str, str, str]] = {
-    # Element Plus 弹窗: body 直接子元素是 __wrapper, 不是 .el-message-box 本身
-    "body > div.el-message-box": (
-        By.CSS_SELECTOR, ".el-message-box",
-        "Element Plus 弹窗 DOM: body > __wrapper > .el-message-box"),
-    "body > div.el-dialog": (
-        By.CSS_SELECTOR, ".el-dialog",
-        "Element Plus dialog DOM: body > __wrapper > .el-dialog"),
-    "body > .el-message-box": (
-        By.CSS_SELECTOR, ".el-message-box",
-        "body 子元素不是 .el-message-box"),
-    "body > .el-dialog": (
-        By.CSS_SELECTOR, ".el-dialog",
-        "body 子元素不是 .el-dialog"),
-    # 删除确认弹窗按钮: 可能是 danger (红色) 不是 primary
-    ".el-message-box__btns button.el-button--primary": (
-        By.CSS_SELECTOR, ".el-message-box__btns button.el-button--danger, "
-                         ".el-message-box__btns button.el-button--primary",
-        "删除确认弹窗用 danger 按钮, 保存用 primary, 都试试"),
-}
+
+_DEFAULT_RULES: Dict[str, Any] = default_rules()
+
+
+def _normalize_l1_rule(rule: Any) -> Optional[Tuple[str, str, str]]:
+    """把 {by, locator, reason} / [by, locator, reason] 归一成三元组; 畸形返回 None"""
+    if isinstance(rule, dict):
+        new_by = str(rule.get("by") or By.CSS_SELECTOR)
+        new_loc = rule.get("locator") or rule.get("selector")
+        reason = str(rule.get("reason") or "内置规则")
+    elif isinstance(rule, (list, tuple)) and len(rule) >= 2:
+        new_by = str(rule[0])
+        new_loc = rule[1]
+        reason = str(rule[2]) if len(rule) > 2 else "内置规则"
+    else:
+        return None
+    if not isinstance(new_loc, str) or not new_loc.strip():
+        return None
+    return (new_by, new_loc.strip(), reason)
+
+
+def _l1_rule(rules: Dict[str, Any], broken_locator: str) -> Optional[Tuple[str, str, str]]:
+    """规则包里该坏定位器的 (by, locator, reason); 没收录或写畸形返回 None"""
+    table = rules.get("l1_rules")
+    if not isinstance(table, dict) or broken_locator not in table:
+        return None
+    return _normalize_l1_rule(table[broken_locator])
+
+
+def _l1_tuple_view(rules: Dict[str, Any]) -> Dict[str, Tuple[str, str, str]]:
+    """{坏定位器: (by, locator, reason)} 只读快照 (历史上 L1_RULES 的样子)"""
+    table = rules.get("l1_rules")
+    if not isinstance(table, dict):
+        return {}
+    view: Dict[str, Tuple[str, str, str]] = {}
+    for broken, rule in table.items():
+        norm = _normalize_l1_rule(rule)
+        if norm is not None:
+            view[broken] = norm
+    return view
+
+
+# 向后兼容视图: 老代码可能 `from ai_kit.healer import L1_RULES`。
+# 数据源已经是默认规则包, 这里只是历史三元组格式的只读快照, 不要改它。
+L1_RULES: Dict[str, Tuple[str, str, str]] = _l1_tuple_view(_DEFAULT_RULES)
 
 
 def _cache_path() -> str:
@@ -79,161 +110,96 @@ def _save_cache(cache: Dict[str, Dict[str, Any]]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# profile 规则包 (可选) — 站点知识覆盖框架内置规则
-#
-# 约定是"宽松 dict": 缺键、类型不对、整个 profile 不是 dict 一律当没有,
-# 绝不因为规则包写错而让定位/评测链路上抛。支持三个键:
-#     l1_rules            {坏定位器: {by, locator, reason} 或 [by, locator, reason]}
-#     semantic_candidates {语义: [css, ...]}
-#     intent_keywords     {confirm|cancel|close: [同义词, ...]}
+# L2: 多语义 CSS — 语义提示 / 语义候选 / 意图词表全部来自规则包
 # ---------------------------------------------------------------------------
 
-def _profile_get(profile: Any, key: str) -> Any:
-    """从 profile 取一个键 (dict 或带 .get 的对象), 任何异常/缺失都返回 None"""
-    if profile is None:
-        return None
-    try:
-        if hasattr(profile, "get"):
-            return profile.get(key)
-        return getattr(profile, key, None)
-    except Exception:  # noqa: BLE001 — profile 是外部数据
-        return None
+def _hint_pairs(rules: Dict[str, Any]) -> Tuple[Tuple[str, str], ...]:
+    """规则包里的 (正则源码, 语义) 对, 已滤掉畸形条目"""
+    hints = rules.get("semantic_hints")
+    if not isinstance(hints, (list, tuple)):
+        return ()
+    pairs: List[Tuple[str, str]] = []
+    for item in hints:
+        if (isinstance(item, (list, tuple)) and len(item) >= 2
+                and isinstance(item[0], str) and isinstance(item[1], str)
+                and item[0].strip() and item[1].strip()):
+            pairs.append((item[0], item[1]))
+    return tuple(pairs)
 
 
-def _profile_l1_rule(profile: Any, broken_locator: str) -> Optional[Tuple[str, str, str]]:
-    """站点坑表里该坏定位器的 (by, locator, reason); 没有/畸形返回 None"""
-    rules = _profile_get(profile, "l1_rules")
-    if not isinstance(rules, dict) or broken_locator not in rules:
-        return None
-    rule = rules[broken_locator]
-    if isinstance(rule, dict):
-        new_by = str(rule.get("by") or By.CSS_SELECTOR)
-        new_loc = rule.get("locator") or rule.get("selector")
-        reason = str(rule.get("reason") or "profile 规则")
-    elif isinstance(rule, (list, tuple)) and len(rule) >= 2:
-        new_by = str(rule[0])
-        new_loc = rule[1]
-        reason = str(rule[2]) if len(rule) > 2 else "profile 规则"
-    else:
-        return None
-    if not isinstance(new_loc, str) or not new_loc.strip():
-        return None
-    return (new_by, new_loc.strip(), reason)
-
-
-def _profile_semantic_candidates(profile: Any, semantic: str) -> List[str]:
-    """站点 profile 给该语义的 CSS 候选 (已去空/非字符串)"""
-    table = _profile_get(profile, "semantic_candidates")
-    if not isinstance(table, dict):
-        return []
-    items = table.get(semantic)
-    if not isinstance(items, (list, tuple)):
-        return []
-    return [s.strip() for s in items if isinstance(s, str) and s.strip()]
-
-
-def _profile_intent_keywords(profile: Any) -> Dict[str, List[str]]:
-    """站点 profile 的意图同义词表 (键/值都已 lower 化)"""
-    table = _profile_get(profile, "intent_keywords")
-    if not isinstance(table, dict):
-        return {}
-    out: Dict[str, List[str]] = {}
-    for bucket, words in table.items():
-        if not isinstance(words, (list, tuple)):
+@lru_cache(maxsize=16)
+def _compile_hints(pairs: Tuple[Tuple[str, str], ...]) -> Tuple[Tuple[re.Pattern, str], ...]:
+    """正则按 pair 元组缓存只编译一次; 写错的正则跳过, 不影响其他提示"""
+    compiled: List[Tuple[re.Pattern, str]] = []
+    for pattern, semantic in pairs:
+        try:
+            compiled.append((re.compile(pattern, re.I), semantic))
+        except re.error:
             continue
-        cleaned = [w.strip().lower() for w in words
-                   if isinstance(w, str) and w.strip()]
-        if cleaned:
-            out[str(bucket).strip().lower()] = cleaned
-    return out
+    return tuple(compiled)
 
 
-# ---------------------------------------------------------------------------
-# L2: 多语义 CSS — 基于语义类别枚举候选选择器
-# ---------------------------------------------------------------------------
-
-SEMANTIC_HINTS: List[Tuple[re.Pattern, str]] = [
-    (re.compile(r"message[-_]?box|el-message-box", re.I), "message_box"),
-    (re.compile(r"\.el-dialog", re.I), "dialog"),
-    (re.compile(r"el-table", re.I), "table"),
-    (re.compile(r"el-select|el-dropdown", re.I), "select"),
-]
-
-SEMANTIC_CANDIDATES: Dict[str, List[str]] = {
-    "message_box": [
-        ".el-message-box",
-        ".el-message-box__wrapper .el-message-box",
-        "body > .el-message-box__wrapper > .el-message-box",
-    ],
-    "dialog": [
-        ".el-dialog",
-        ".el-dialog__wrapper .el-dialog",
-    ],
-    "table": [
-        ".el-table__body-wrapper .el-table__body",
-        ".el-table .el-table__body",
-        "table.el-table__body",
-    ],
-    "select": [
-        ".el-select__wrapper",
-        ".el-select .el-input__inner",
-    ],
-}
-
-
-def _guess_semantic(locator: str) -> Optional[str]:
-    for pat, hint in SEMANTIC_HINTS:
+def _guess_semantic(locator: str,
+                    rules: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """按规则包的语义提示判断定位器属于哪个语义; 认不出来返回 None"""
+    active = rules if isinstance(rules, dict) else _DEFAULT_RULES
+    for pat, hint in _compile_hints(_hint_pairs(active)):
         if pat.search(locator):
             return hint
     return None
 
 
-# 意图分组 -> 内置关键词; profile.intent_keywords 可给同一组追加站点同义词
-_INTENT_BUCKETS: Dict[str, Tuple[str, ...]] = {
-    "confirm": ("确定", "confirm", "delete"),
-    "cancel": ("取消", "cancel"),
-    "close": ("关闭", "close"),
-}
-
-_INTENT_SELECTORS: Dict[str, str] = {
-    "confirm": (".el-message-box__btns button.el-button--danger, "
-                ".el-message-box__btns button.el-button--primary, "
-                ".el-message-box__btns button:last-child"),
-    "cancel": ".el-message-box__btns button.el-button--default",
-    "close": ".el-message-box__headerbtn, .el-dialog__close",
-}
+# 向后兼容视图: 老代码可能直接读这两个常量。数据源已是默认规则包。
+SEMANTIC_HINTS: List[Tuple[re.Pattern, str]] = list(_compile_hints(_hint_pairs(_DEFAULT_RULES)))
+SEMANTIC_CANDIDATES: Dict[str, List[str]] = _DEFAULT_RULES["semantic_candidates"]
 
 
-def _l2_candidates(original_by: str, original_loc: str,
-                   intent: str = "", profile=None) -> List[Tuple[str, str, float]]:
-    """返回 [(by, locator, confidence)] 候选列表; profile 为 None 时与旧版逐字一致"""
-    results: List[Tuple[str, str, float]] = []
-    sem = _guess_semantic(original_loc)
-    results.append((original_by, original_loc, 0.1))
+def _l2_candidates(original_by: str, original_loc: str, intent: str = "",
+                   rules: Optional[Dict[str, Any]] = None
+                   ) -> List[Tuple[str, str, float]]:
+    """返回 [(by, locator, confidence)] 候选列表
 
-    if sem and sem in SEMANTIC_CANDIDATES:
-        # 站点 profile 的候选更贴近真实 DOM, 排在框架内置候选之前
-        for i, cand in enumerate(_profile_semantic_candidates(profile, sem)):
-            results.append((By.CSS_SELECTOR, cand, 0.95 - i * 0.05))
-        for i, cand in enumerate(SEMANTIC_CANDIDATES[sem]):
-            conf = 0.9 - i * 0.05
-            results.append((By.CSS_SELECTOR, cand, conf))
+    候选顺序: 站点规则 (合并时已排在前面) → 框架规则 → 原始定位器 0.1 兜底;
+    语义候选置信从 0.9 起按位置递减, 保证单调且不与意图命中 (1.0) 抢位置。
+    """
+    active = rules if isinstance(rules, dict) else _DEFAULT_RULES
+    results: List[Tuple[str, str, float]] = [(original_by, original_loc, 0.1)]
 
-    # intent 辅助 (内置关键词 + profile 同义词)
-    intent_lower = intent.lower()
-    keywords = _profile_intent_keywords(profile)
-    for bucket in ("confirm", "cancel", "close"):
-        words = _INTENT_BUCKETS[bucket] + tuple(keywords.get(bucket, ()))
-        if any(word in intent_lower for word in words):
-            results.append((By.CSS_SELECTOR, _INTENT_SELECTORS[bucket], 1.0))
+    sem = _guess_semantic(original_loc, active)
+    table = active.get("semantic_candidates")
+    items = table.get(sem) if isinstance(table, dict) and sem else None
+    if isinstance(items, (list, tuple)):
+        for i, cand in enumerate(items):
+            if isinstance(cand, str) and cand.strip():
+                results.append((By.CSS_SELECTOR, cand.strip(), 0.9 - i * 0.05))
 
+    # 意图辅助: 关键词命中就把该组的选择器顶到最前 (1.0)
+    intent_lower = str(intent or "").lower()
+    keywords = active.get("intent_keywords")
+    selectors = active.get("intent_selectors")
+    if intent_lower and isinstance(keywords, dict) and isinstance(selectors, dict):
+        for bucket, words in keywords.items():
+            if not isinstance(words, (list, tuple)):
+                continue
+            selector = selectors.get(bucket)
+            if not isinstance(selector, str) or not selector.strip():
+                continue
+            if any(str(w).lower() in intent_lower for w in words if str(w).strip()):
+                results.append((By.CSS_SELECTOR, selector.strip(), 1.0))
     return results
 
 
-def _l3_xpath_candidates(driver: WebDriver) -> List[Tuple[str, str, float]]:
-    """基于当前可见容器生成相对 XPath"""
+def _l3_xpath_candidates(driver: WebDriver,
+                         containers: Optional[List[str]] = None
+                         ) -> List[Tuple[str, str, float]]:
+    """基于当前可见容器 (规则包 l3_containers) 生成相对 XPath"""
     candidates: List[Tuple[str, str, float]] = []
-    for sel in [".el-message-box", ".el-dialog"]:
+    if containers is None:
+        containers = _DEFAULT_RULES.get("l3_containers") or []
+    for sel in containers:
+        # 只吃 .class 形式: 下面的 XPath 靠 @class 包含匹配, [role=dialog] 之类会生成垃圾
+        if not isinstance(sel, str) or not sel.startswith(".") or len(sel) < 2:
+            continue
         try:
             el = driver.find_element(By.CSS_SELECTOR, sel)
             if _is_visible(el):
@@ -323,11 +289,16 @@ def _is_valid_heal(el: WebElement, expected_kind: Optional[set]) -> bool:
 def try_heal(driver: WebDriver,
              original_by: str,
              original_locator: str,
-             intent: str = "") -> Optional[WebElement]:
+             intent: str = "",
+             profile=None) -> Optional[WebElement]:
     """
-    尝试用 L1→L2→L3 分层策略找到原始定位器本应找到的元素.
+    尝试用 L1→L2→L3(→L4) 分层策略找到原始定位器本应找到的元素.
     找到 → 返回 WebElement + 写入缓存. 全部失败 → 返回 None.
+
+    profile: 可选站点规则包 (dict / 路径 / 包名), 覆盖内置规则; 不传则只用
+             内置包 (generic + element_plus), 与历史上硬编码规则的行为一致。
     """
+    rules = effective_rules(profile)
     cache = _load_cache()
     cache_key = f"{original_by}::{original_locator}"
     expected_kind = _infer_expected_kind(original_locator, intent)
@@ -346,8 +317,9 @@ def try_heal(driver: WebDriver,
             pass
 
     # 1. L1 规则映射
-    if original_locator in L1_RULES:
-        new_by, new_loc, reason = L1_RULES[original_locator]
+    l1_rule = _l1_rule(rules, original_locator)
+    if l1_rule is not None:
+        new_by, new_loc, reason = l1_rule
         try:
             el = driver.find_element(new_by, new_loc)
             if _is_valid_heal(el, expected_kind):
@@ -358,7 +330,7 @@ def try_heal(driver: WebDriver,
             pass
 
     # 2. L2 多语义
-    cands = _l2_candidates(original_by, original_locator, intent)
+    cands = _l2_candidates(original_by, original_locator, intent, rules)
     for by, loc, conf in sorted(cands, key=lambda x: -x[2]):
         try:
             el = driver.find_element(by, loc)
@@ -370,7 +342,7 @@ def try_heal(driver: WebDriver,
             continue
 
     # 3. L3 相对 XPath
-    for by, loc, conf in _l3_xpath_candidates(driver):
+    for by, loc, conf in _l3_xpath_candidates(driver, rules.get("l3_containers")):
         try:
             el = driver.find_element(by, loc)
             if _is_valid_heal(el, expected_kind):
@@ -381,7 +353,8 @@ def try_heal(driver: WebDriver,
             continue
 
     # 4. L4 LLM 辅助自愈 (Phase 2)
-    l4_cands = _l4_llm_candidates(driver, original_locator, intent)
+    l4_cands = _l4_llm_candidates(driver, original_locator, intent,
+                                  containers=rules.get("l4_containers"))
     for by, loc, conf in sorted(l4_cands, key=lambda x: -x[2]):
         try:
             el = driver.find_element(by, loc)
@@ -454,10 +427,15 @@ def rank_candidates(driver: Optional[WebDriver] = None,
                      None 时这两层不参与。
         by, locator: 坏定位器的定位方式与表达式; locator 为空 → 返回 []。
         intent     : 元素用途/动作描述 (如 "确定删除"), 用于 L2 意图候选。
-        profile    : 可选规则包 (见 ai_kit.profiles), 支持键:
+        profile    : 可选规则包, 覆盖内置包 (generic + element_plus)。
+                     可以是 dict / JSON 路径 / 包名 ("antd", "example_shop");
+                     支持键 (详见 ai_kit.profiles.loader):
                        l1_rules            {坏定位器: {by, locator, reason}}
+                       semantic_hints      [[正则, 语义]]
                        semantic_candidates {语义: [css, ...]}
                        intent_keywords     {confirm|cancel|close: [同义词]}
+                       intent_selectors    {confirm|cancel|close: css}
+                       l3_containers / l4_containers  [css, ...]
                      站点规则优先于框架内置; 缺键/畸形一律忽略。
         llm_client : 可选 LLM 客户端, 形如 (system, user) -> dict|None;
                      不给则不产 L4 候选 (评测默认离线可复现)。
@@ -467,25 +445,23 @@ def rank_candidates(driver: Optional[WebDriver] = None,
         return []
     orig_by = str(by or "").strip() or By.CSS_SELECTOR
     intent_text = str(intent or "")
+    rules = effective_rules(profile)
 
     ranked: List[Candidate] = []
 
-    # L1: profile 站点坑表优先, 否则内置规则
-    l1_rule = _profile_l1_rule(profile, orig_loc)
-    if l1_rule is None and orig_loc in L1_RULES:
-        new_by, new_loc, reason = L1_RULES[orig_loc]
-        l1_rule = (new_by, new_loc, reason)
+    # L1: 规则包坑表 (站点覆盖已由 effective_rules 合并)
+    l1_rule = _l1_rule(rules, orig_loc)
     if l1_rule is not None:
         ranked.append(Candidate(l1_rule[0], l1_rule[1], 1.1, "L1", l1_rule[2]))
 
-    # L2: 语义候选 + 意图候选 (内部已含原始定位器 0.1 兑底)
-    for cand_by, cand_loc, conf in _l2_candidates(orig_by, orig_loc, intent_text, profile):
+    # L2: 语义候选 + 意图候选 (内部已含原始定位器 0.1 兜底)
+    for cand_by, cand_loc, conf in _l2_candidates(orig_by, orig_loc, intent_text, rules):
         ranked.append(Candidate(cand_by, cand_loc, conf, "L2"))
 
     # L3: 相对 XPath, 需要活 driver
     if driver is not None:
         try:
-            l3 = _l3_xpath_candidates(driver)
+            l3 = _l3_xpath_candidates(driver, rules.get("l3_containers"))
         except Exception:  # noqa: BLE001 — driver 是外部对象
             l3 = []
         ranked.extend(Candidate(b, loc, conf, "L3") for b, loc, conf in l3)
@@ -493,7 +469,9 @@ def rank_candidates(driver: Optional[WebDriver] = None,
     # L4: 只有显式注入 llm_client 才参与 (离线评测永远不跑)
     if driver is not None and llm_client is not None:
         try:
-            l4 = _l4_llm_candidates(driver, orig_loc, intent_text, llm_client=llm_client)
+            l4 = _l4_llm_candidates(driver, orig_loc, intent_text,
+                                    llm_client=llm_client,
+                                    containers=rules.get("l4_containers"))
         except Exception:  # noqa: BLE001
             l4 = []
         ranked.extend(Candidate(b, loc, conf, "L4") for b, loc, conf in l4)
@@ -544,7 +522,6 @@ def dump_page_diagnostics(driver: WebDriver) -> None:
             print(f"    .{label}: scan failed ({ex})")
 
 
-
 # ---------------------------------------------------------------------------
 # L4 (Phase 2): LLM 辅助自愈 - 抓容器 innerHTML -> 让 LLM 给候选
 # ---------------------------------------------------------------------------
@@ -567,9 +544,14 @@ _LLM_HEAL_SYSTEM = (
 def _l4_llm_candidates(driver: WebDriver,
                        original_locator: str,
                        intent: str = "",
-                       llm_client=None) -> List[Tuple[str, str, float]]:
+                       llm_client=None,
+                       containers: Optional[List[str]] = None
+                       ) -> List[Tuple[str, str, float]]:
     """Phase 2 L4: capture visible container HTML, ask LLM for selectors.
 
+    containers: 规则包 l4_containers (默认内置包)。通用模式 ([role=dialog] /
+    .modal / [class*=dialog]) 排在框架容器之后, 只在前面的都没抓到时才兜底,
+    这样 Element Plus 页面的抓取顺序与历史上硬编码的容器列表一致。
     llm_client: (system_prompt, user_prompt) -> dict|None。为 None 时用内置
     ai_kit.client.chat_json (先判 llm_available()); 注入时由调用方负责可用性,
     客户端抛错/返回怪数据都只降级成 [] 候选。
@@ -583,10 +565,14 @@ def _l4_llm_candidates(driver: WebDriver,
             return []
         llm_client = partial(chat_json, max_retries=1)
 
+    if containers is None:
+        containers = _DEFAULT_RULES.get("l4_containers") or []
+
     # 抓可见容器 innerHTML
     containers_html = []
-    for sel in [".el-message-box", ".el-dialog", ".el-message-box__wrapper",
-                ".filter-card", "table.el-table__body"]:
+    for sel in containers:
+        if not isinstance(sel, str) or not sel.strip():
+            continue
         try:
             els = driver.find_elements(By.CSS_SELECTOR, sel)
             for el in els[:2]:

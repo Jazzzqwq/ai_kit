@@ -1,0 +1,78 @@
+{
+  "schema": 1,
+  "name": "element_plus",
+  "description": "Element Plus (Vue3) 规则包: 原 ai_kit.healer 里硬编码的 L1 坑表 / 语义候选 / 意图词表逐条搬到这里, 数值与顺序保持不变 —— 默认规则包就是 generic + 本包的合并, 所以搬移不能让任何候选序列发生变化。",
+  "l1_rules": {
+    "body > div.el-message-box": {
+      "by": "css selector",
+      "locator": ".el-message-box",
+      "reason": "Element Plus 弹窗 DOM: body > __wrapper > .el-message-box"
+    },
+    "body > div.el-dialog": {
+      "by": "css selector",
+      "locator": ".el-dialog",
+      "reason": "Element Plus dialog DOM: body > __wrapper > .el-dialog"
+    },
+    "body > .el-message-box": {
+      "by": "css selector",
+      "locator": ".el-message-box",
+      "reason": "body 子元素不是 .el-message-box"
+    },
+    "body > .el-dialog": {
+      "by": "css selector",
+      "locator": ".el-dialog",
+      "reason": "body 子元素不是 .el-dialog"
+    },
+    ".el-message-box__btns button.el-button--primary": {
+      "by": "css selector",
+      "locator": ".el-message-box__btns button.el-button--danger, .el-message-box__btns button.el-button--primary",
+      "reason": "删除确认弹窗用 danger 按钮, 保存用 primary, 都试试"
+    }
+  },
+  "semantic_hints": [
+    ["message[-_]?box|el-message-box", "message_box"],
+    ["\\.el-dialog", "dialog"],
+    ["el-table", "table"],
+    ["el-select|el-dropdown", "select"]
+  ],
+  "semantic_candidates": {
+    "message_box": [
+      ".el-message-box",
+      ".el-message-box__wrapper .el-message-box",
+      "body > .el-message-box__wrapper > .el-message-box"
+    ],
+    "dialog": [
+      ".el-dialog",
+      ".el-dialog__wrapper .el-dialog"
+    ],
+    "table": [
+      ".el-table__body-wrapper .el-table__body",
+      ".el-table .el-table__body",
+      "table.el-table__body"
+    ],
+    "select": [
+      ".el-select__wrapper",
+      ".el-select .el-input__inner"
+    ]
+  },
+  "intent_keywords": {
+    "confirm": ["确定", "confirm", "delete"],
+    "cancel": ["取消", "cancel"],
+    "close": ["关闭", "close"]
+  },
+  "intent_selectors": {
+    "confirm": ".el-message-box__btns button.el-button--danger, .el-message-box__btns button.el-button--primary, .el-message-box__btns button:last-child",
+    "cancel": ".el-message-box__btns button.el-button--default",
+    "close": ".el-message-box__headerbtn, .el-dialog__close"
+  },
+  "l3_containers": [
+    ".el-message-box",
+    ".el-dialog"
+  ],
+  "l4_containers": [
+    ".el-message-box",
+    ".el-dialog",
+    ".el-message-box__wrapper",
+    "table.el-table__body"
+  ]
+}
