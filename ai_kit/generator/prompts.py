@@ -2,6 +2,9 @@
 """
 Phase 3 AI 用例生成 — Prompt 模板 + 可自定义规则
 你可以改这里的任何常量来调整生成风格 / 用例数量 / 命名前缀
+
+页面结构采集不在这个文件: 已迁到 ai_kit.perception.collector (一次 JS 往返拿回
+裁剪过的 JSON 清单), generator 只负责"清单 -> 用例"。
 """
 from __future__ import annotations
 
@@ -136,63 +139,3 @@ $test_classes
 
 BOUNDARY_LABEL = "含边界值" if GENERATE_BOUNDARY_CASES else "不含边界值"
 NEGATIVE_LABEL = "含逆向测试" if GENERATE_NEGATIVE_CASES else "不含逆向测试"
-
-
-# ============================================================
-# Step 1: 爬页面结构的 JS 模板
-# ============================================================
-
-DOM_SCRAPE_JS = """
-// 返回当前页面的可操作元素摘要 (给 LLM 生成用例用)
-(function() {
-    var result = { title: document.title, url: location.href };
-    
-    // 1) 表单输入
-    var inputs = document.querySelectorAll('input[type=text], input:not([type]), input[type=password], textarea, select');
-    result.inputs = Array.from(inputs).map(function(el) {
-        return {
-            name: el.name || '',
-            placeholder: el.placeholder || '',
-            type: el.type || el.tagName.toLowerCase(),
-            id: el.id || '',
-            class: (el.className || '').toString().slice(0, 60),
-            required: el.required || false
-        };
-    });
-    
-    // 2) 按钮 (有文字的)
-    var btns = document.querySelectorAll('button, [role=button], a.btn, .el-button');
-    result.buttons = Array.from(btns).filter(function(b) {
-        return (b.textContent || '').trim().length > 0 && (b.offsetWidth > 0 || b.offsetHeight > 0);
-    }).map(function(b) {
-        return {
-            text: (b.textContent || '').trim().slice(0, 40),
-            class: (b.className || '').toString().slice(0, 80),
-            id: b.id || ''
-        };
-    });
-    
-    // 3) 表格
-    var tables = document.querySelectorAll('table, .el-table');
-    result.tables = Array.from(tables).map(function(t) {
-        var headers = t.querySelectorAll('th, thead th, .el-table th .cell');
-        return {
-            class: (t.className || '').toString().slice(0, 80),
-            headers: Array.from(headers).map(function(h) { return (h.textContent || '').trim().slice(0, 30); }).filter(Boolean)
-        };
-    });
-    
-    // 4) 下拉/选择器
-    var selects = document.querySelectorAll('select, .el-select, .el-dropdown');
-    result.selects = Array.from(selects).map(function(s) {
-        return {
-            class: (s.className || '').toString().slice(0, 80),
-            options: Array.from(s.querySelectorAll('option, .el-select-dropdown__item')).slice(0, 10).map(function(o) {
-                return (o.textContent || '').trim().slice(0, 30);
-            }).filter(Boolean)
-        };
-    });
-    
-    return JSON.stringify(result, null, 2);
-})();
-"""

@@ -40,12 +40,12 @@ def _require(module_name: str):
 
 _llm_client = _require("ai_kit.client")
 _prompts = _require("ai_kit.generator.prompts")
+_collector = _require("ai_kit.perception.collector")
 
 chat_json = _llm_client.chat_json
 llm_available = _llm_client.llm_available
 
 # 规则 / 模板 / 提示词全部从 prompts 取, 本模块不再留副本 (改 prompts.py 即生效)
-DOM_SCRAPE_JS = _prompts.DOM_SCRAPE_JS
 TEST_USER_PREFIXES = _prompts.TEST_USER_PREFIXES
 MAX_CASES_PER_CLASS = _prompts.MAX_CASES_PER_CLASS
 GENERATE_BOUNDARY_CASES = _prompts.GENERATE_BOUNDARY_CASES
@@ -60,18 +60,88 @@ PYTEST_CODE_TEMPLATE = Template(_prompts.PYTEST_CODE_TEMPLATE)
 # ---------------------------------------------------------------------------
 
 def scrape_page_structure(driver, page_name: str = "") -> Dict[str, Any]:
-    """在已打开的页面上执行 JS, 返回可操作元素摘要"""
-    if not DOM_SCRAPE_JS:
-        return {"title": page_name, "inputs": [], "buttons": [], "tables": [], "selects": []}
-    try:
-        raw = driver.execute_script(DOM_SCRAPE_JS)
-        if isinstance(raw, str):
-            return json.loads(raw)
-        if isinstance(raw, dict):
-            return raw
-    except Exception as e:
-        print(f"  [Generator] scrape_page_structure JS 执行失败: {e}")
-    return {"title": page_name, "inputs": [], "buttons": [], "tables": [], "selects": []}
+    """在已打开的页面上采集可操作元素清单, 原样返回 inventory。
+
+    实现在 perception.collector: 一次 JS 往返拿回裁剪过的 JSON 清单, 带多策略
+    定位 / 语义角色 / 表单约束 / 表格行内按钮 / 风险标记。driver=None / 页面崩 /
+    返回脏数据都由 collect 内部降级成空骨架 + notes, 这里不重复兜底。
+
+    不要在这里自己拼 execute_script —— 老 DOM_SCRAPE_JS 是语句形式的 IIFE,
+    selenium 把它当函数体执行, 永远返回 undefined, 于是每次采集都静默返回空页面,
+    而 LLM 就在"这页什么都没有"的前提下生成用例。
+    """
+    return _collector.collect(driver, page_name=page_name)
+
+
+# LLM 只需要"这页有哪些控件", 不需要 outerHTML / 备选定位串: 65 个元素各带
+# 2000 字符 HTML 会把提示词直接烧穿。压成一行摘要再进模板。
+_SLIM_KEYS = ("eid", "text", "tag", "role", "name", "container", "risk")
+_SLIM_BLOCK_KEYS = ("constraints", "options", "actions")
+
+
+def _as_dict(value: Any) -> Dict[str, Any]:
+    """宽容取 dict —— slim 会被喂各种半成品, 类型不对就当空"""
+    return value if isinstance(value, dict) else {}
+
+
+def _as_items(value: Any) -> List[Any]:
+    """宽容取 list —— 字符串有 [:n] 切片, 不拦住会被逐字符当成元素"""
+    return value if isinstance(value, list) else []
+
+
+def _slim_element(element: Any) -> Dict[str, Any]:
+    """单个元素 -> 一行摘要 (丢 html / alternatives / aria)"""
+    element = _as_dict(element)
+    slim = {key: element[key] for key in _SLIM_KEYS if element.get(key)}
+    for key in _SLIM_BLOCK_KEYS:
+        if element.get(key):
+            slim[key] = element[key]
+    locator = element.get("locator") or {}
+    if locator.get("value"):
+        slim["locator"] = locator["value"]
+    return slim
+
+
+def _slim_table(table: Any) -> Dict[str, Any]:
+    """表格 -> 列名 + 行数 + 行内按钮 (样例行只留 2 行)"""
+    table = _as_dict(table)
+    slim = _slim_element(table)
+    slim["columns"] = _as_items(table.get("columns"))
+    slim["row_count"] = table.get("row_count", 0)
+    slim["sample_rows"] = _as_items(table.get("sample_rows"))[:2]
+    slim["row_actions"] = [
+        {"text": action.get("text"), "eid": action.get("eid")}
+        for action in (_as_dict(a) for a in _as_items(table.get("row_actions"))[:8])
+        if action.get("text")]
+    return slim
+
+
+def slim_page_structure(inventory: Dict[str, Any], page_name: str = "",
+                        max_inputs: int = 15, max_buttons: int = 20,
+                        max_tables: int = 3,
+                        max_selects: int = 5) -> Dict[str, Any]:
+    """采集清单 -> LLM 友好版: 按类别截断, 保留全局摘要与风险统计"""
+    inventory = _as_dict(inventory)
+    slim: Dict[str, Any] = {
+        "title": inventory.get("title") or page_name,
+        "url": inventory.get("url") or "",
+        "counts": _as_dict(inventory.get("counts")),
+        "risks": _as_dict(inventory.get("risks")),
+        "containers": _as_dict(inventory.get("container_summary")),
+        "dialogs": [{"text": d.get("text") or "", "buttons": _as_items(d.get("buttons"))}
+                    for d in (_as_dict(x) for x in _as_items(inventory.get("dialogs"))[:2])],
+        "inputs": [_slim_element(e) for e in _as_items(inventory.get("inputs"))[:max_inputs]],
+        "buttons": [_slim_element(e) for e in _as_items(inventory.get("buttons"))[:max_buttons]],
+        "selects": [_slim_element(e) for e in _as_items(inventory.get("selects"))[:max_selects]],
+        "tables": [_slim_table(t) for t in _as_items(inventory.get("tables"))[:max_tables]],
+    }
+    if inventory.get("truncated"):
+        slim["truncated"] = True
+        slim["groups"] = _as_items(inventory.get("groups"))
+    notes = _as_items(inventory.get("notes"))
+    if notes:
+        slim["notes"] = notes
+    return slim
 
 
 def extract_po_methods(po_class_or_instance) -> str:
@@ -110,13 +180,7 @@ def generate_case_plan(page_structure: Dict[str, Any],
         return None
 
     # 精简页面结构 (避免 token 爆炸)
-    trimmed = {
-        "title": page_structure.get("title", page_name),
-        "inputs": page_structure.get("inputs", [])[:15],
-        "buttons": page_structure.get("buttons", [])[:20],
-        "tables": page_structure.get("tables", [])[:3],
-        "selects": page_structure.get("selects", [])[:5],
-    }
+    trimmed = slim_page_structure(page_structure, page_name=page_name)
 
     # 模板在 prompts.CASE_PLAN_TEMPLATE (string.Template 语法, JSON 大括号无需转义)
     user_msg = CASE_PLAN_TEMPLATE.substitute(
