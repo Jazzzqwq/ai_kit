@@ -6,10 +6,13 @@ Phase 3 AI 用例生成器 — Test Generator
   Step 1: 爬页面 DOM 结构 + 读取 Page Object 方法签名 (本地)
   Step 2: LLM 生成用例清单 → 套 pytest 模板 → 落盘
 
-使用方式 (CLI):
-  python -m ai_kit.generator.core --page "用户管理" \
+使用方式 (CLI, 两个入口等价):
+  python -m ai_kit.generator --page "用户管理" \
       --po-module pages.user_management_page --po-class UserManagementPage \
       --fixture user_management_page
+  python -m ai_kit.generator.core ...   # 同上
+
+规则 / 模板 / 提示词全部在 prompts.py, 本模块只负责流程。
 """
 from __future__ import annotations
 
@@ -17,34 +20,39 @@ import argparse
 import importlib
 import json
 import os
-import re
 import time
+from string import Template
 from typing import Any, Dict, List, Optional
 
 
 # ---------------------------------------------------------------------------
-# 动态 import Phase 2 模块
+# 包内依赖 (按模块全名 import, 不再猜 legacy 模块名)
 # ---------------------------------------------------------------------------
 
-def _try_import(name: str, alt_name: Optional[str] = None):
-    for mod_name in [name, alt_name or f"pages.{name}"]:
-        try:
-            return importlib.import_module(mod_name)
-        except Exception:
-            continue
-    return None
+def _require(module_name: str):
+    """导入包内必需模块; 失败时抛指名的 ImportError, 不再静默吞掉原因"""
+    try:
+        return importlib.import_module(module_name)
+    except Exception as e:  # noqa: BLE001 — 统一转成带上下文的 ImportError
+        raise ImportError(
+            f"ai_kit.generator 依赖模块 {module_name!r} 导入失败: {e}") from e
 
 
-_llm_client = (_try_import("llm_client") or _try_import("ai_kit.client"))
-_gen_prompts = (_try_import("generator_prompts") or _try_import("ai_kit.generator.prompts"))
-
-if _llm_client is None:
-    raise ImportError("Phase 3 需要 LLM 客户端可用 (ai_kit.client 或 llm_client)")
+_llm_client = _require("ai_kit.client")
+_prompts = _require("ai_kit.generator.prompts")
 
 chat_json = _llm_client.chat_json
 llm_available = _llm_client.llm_available
 
-DOM_SCRAPE_JS = (_gen_prompts.DOM_SCRAPE_JS if _gen_prompts else "")
+# 规则 / 模板 / 提示词全部从 prompts 取, 本模块不再留副本 (改 prompts.py 即生效)
+DOM_SCRAPE_JS = _prompts.DOM_SCRAPE_JS
+TEST_USER_PREFIXES = _prompts.TEST_USER_PREFIXES
+MAX_CASES_PER_CLASS = _prompts.MAX_CASES_PER_CLASS
+GENERATE_BOUNDARY_CASES = _prompts.GENERATE_BOUNDARY_CASES
+GENERATE_NEGATIVE_CASES = _prompts.GENERATE_NEGATIVE_CASES
+GENERATE_PLAN_SYSTEM = _prompts.GENERATE_PLAN_SYSTEM
+CASE_PLAN_TEMPLATE = Template(_prompts.CASE_PLAN_TEMPLATE)
+PYTEST_CODE_TEMPLATE = Template(_prompts.PYTEST_CODE_TEMPLATE)
 
 
 # ---------------------------------------------------------------------------
@@ -87,18 +95,6 @@ def extract_po_methods(po_class_or_instance) -> str:
 # Step 2: LLM 生成用例清单
 # ---------------------------------------------------------------------------
 
-GENERATE_PLAN_SYSTEM = """你是一个资深 QA 测试工程师. 根据页面结构和 Page Object 方法, 生成该模块的 pytest 测试用例.
-
-严格约束:
-1. 只能使用提供的 Page Object 方法, 禁止硬编码 .click() / .find_element() / execute_script
-2. 所有测试用户必须用提供的前缀 (避免污染原数据, 方便 teardown 统一清理)
-3. 每个 test 方法必须 try/finally 自我清理 (teardown 用 batch_cleanup 兜底)
-4. severity 四档: BLOCKER > CRITICAL > NORMAL > MINOR
-5. 用中文写 allure.story 标题
-6. 输出严格 JSON, 不要 markdown 代码块标记
-"""
-
-
 def generate_case_plan(page_structure: Dict[str, Any],
                        po_methods: str,
                        page_name: str,
@@ -110,7 +106,7 @@ def generate_case_plan(page_structure: Dict[str, Any],
     """调 LLM 生成用例清单 JSON"""
     if not llm_available():
         print(f"  [Generator] ❌ LLM 未配置, 无法生成用例")
-        print(f"  [Generator] 请先在 ai_kit/config.py 填 API Key")
+        print(f"  [Generator] 请先在 .env 里配好 *_API_KEY (见 .env.example)")
         return None
 
     # 精简页面结构 (避免 token 爆炸)
@@ -122,20 +118,16 @@ def generate_case_plan(page_structure: Dict[str, Any],
         "selects": page_structure.get("selects", [])[:5],
     }
 
-    user_msg = (
-        f"## 页面名称\n{page_name}\n\n"
-        f"## 页面结构\n```json\n{json.dumps(trimmed, ensure_ascii=False, indent=2)}\n```\n\n"
-        f"## Page Object 方法签名 (只能用这些)\n```\n{po_methods}\n```\n\n"
-        f"## fixture\n- driver\n- {fixture_name}: Page Object 实例 (已登录)\n\n"
-        f"## 用例规则\n"
-        f"- 测试用户前缀: {', '.join(prefixes)}\n"
-        f"- 每个类最多 {max_cases} 个用例\n"
-        f"- 边界值测试: {'是' if generate_boundary else '否'}\n"
-        f"- 逆向测试: {'是' if generate_negative else '否'}\n\n"
-        f"## 输出 JSON 格式\n"
-        f'{{"classes": [{{"class_name": "Test{Module}{Category}", "category": "", '
-        f'"cases": [{{"method": "test_xxx", "title": "", "severity": "", '
-        f'"steps": ["..."], "expected": ["..."]}}]}}]}}'
+    # 模板在 prompts.CASE_PLAN_TEMPLATE (string.Template 语法, JSON 大括号无需转义)
+    user_msg = CASE_PLAN_TEMPLATE.substitute(
+        page_name=page_name,
+        page_structure=json.dumps(trimmed, ensure_ascii=False, indent=2),
+        po_methods=po_methods,
+        fixture_name=fixture_name,
+        prefixes=", ".join(prefixes),
+        max_cases=max_cases,
+        boundary_rule="是" if generate_boundary else "否",
+        negative_rule="是" if generate_negative else "否",
     )
 
     print(f"  [Generator] 🧠 调 LLM 生成用例清单 (约 5~10s)...")
@@ -209,39 +201,17 @@ class {class_name}:
 '''
         class_blocks.append(class_block)
 
-    # 组装最终文件
-    boundary_label = "含边界值" if _gen_prompts and _gen_prompts.GENERATE_BOUNDARY_CASES else "不含边界值"
-    negative_label = "含逆向测试" if _gen_prompts and _gen_prompts.GENERATE_NEGATIVE_CASES else "不含逆向测试"
-
-    header = f'''# -*- coding: utf-8 -*-
-"""
-AI 自动生成的测试用例 — {page_name}
-生成时间: {time.strftime("%Y-%m-%d %H:%M:%S")}
-生成规则: Phase 3 ({boundary_label}, {negative_label})
-⚠️ 注意: 方法体里有 TODO, 需要你手动填 Page Object 调用和断言
-"""
-import time
-import uuid
-
-import allure
-import pytest
-
-from pages.{po_module} import {po_class}
-
-
-def _fresh_{short}(page, prefix):
-    """创建一个新用户并确保表格里能查到"""
-    suffix = uuid.uuid4().hex[:3]
-    username = f"{{prefix}}_{{suffix}}"
-    page.add_user(username, "Test@123", phone="13900000000")
-    time.sleep(0.2)
-    page.query_by_username(username)
-    row = page.find_row_by_username(username)
-    return username, row
-
-
-'''
-    return header + "\n".join(class_blocks) + "\n"
+    # 文件头 + 工具函数在 prompts.PYTEST_CODE_TEMPLATE, 边界/逆向标签也在 prompts 里算
+    return PYTEST_CODE_TEMPLATE.substitute(
+        page_name=page_name,
+        timestamp=time.strftime("%Y-%m-%d %H:%M:%S"),
+        boundary_label=_prompts.BOUNDARY_LABEL,
+        negative_label=_prompts.NEGATIVE_LABEL,
+        po_module=po_module,
+        po_class=po_class,
+        short=short,
+        test_classes="\n".join(class_blocks),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -254,11 +224,11 @@ def save_generated_code(code: str, tests_dir: str, filename: str) -> str:
     os.makedirs(gen_dir, exist_ok=True)
     fpath = os.path.join(gen_dir, filename)
 
-    # 语法校验: 用 compile() 对代码字符串做纯内存语法编译(不落盘)
+    # 语法校验: compile() 对代码字符串做纯内存语法编译(不落盘), fpath 用于报错定位
     try:
         compile(code, fpath, "exec")
     except SyntaxError as e:
-        print(f"  [Generator] ⚠️ 语法校验警告: {e}")
+        print(f"  [Generator] ⚠️ 语法校验失败: {e.msg} (line {e.lineno})")
         print(f"  [Generator] 代码可能有问题, 请手动检查: {fpath}")
 
     with open(fpath, "w", encoding="utf-8") as f:
@@ -283,14 +253,13 @@ def generate(driver=None,
     一步生成 pytest 测试文件.
     driver: Selenium WebDriver (可选, 传了就爬 DOM)
     page_name: 中文页面名
-    po_module / po_class: Page Object 类位置
+    po_module / po_class: Page Object 类位置 (po_module 写成可 import 的全名, 如 'pages.user_management_page')
     fixture_name: conftest 里的 fixture 名
-    tests_dir: 测试目录 (默认 web_test_framework/tests)
+    tests_dir: 测试目录 (默认当前目录下的 tests)
     """
-    # 默认值
+    # 默认值: 落到调用方 cwd 下的 tests, 不往包安装目录里写
     if not tests_dir:
-        tests_dir = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "tests")
+        tests_dir = os.path.join(os.getcwd(), "tests")
     if not fixture_name:
         fixture_name = po_class.replace("Page", "_page").lower() if po_class else "page"
 
@@ -314,7 +283,6 @@ def generate(driver=None,
         print(f"\n  [Step 1] 没传 driver, 跳过 DOM 爬取 (LLM 只能用 Page Object 方法签名生成)")
 
     print(f"  [Step 1] 提取 Page Object 方法签名...")
-    po_instance = None
     try:
         po_mod = importlib.import_module(po_module)
         po_cls = getattr(po_mod, po_class)
@@ -334,10 +302,10 @@ def generate(driver=None,
             po_methods=po_methods,
             page_name=page_name,
             fixture_name=fixture_name,
-            prefixes=_gen_prompts.TEST_USER_PREFIXES if _gen_prompts else ["gen_"],
-            max_cases=_gen_prompts.MAX_CASES_PER_CLASS if _gen_prompts else 8,
-            generate_boundary=_gen_prompts.GENERATE_BOUNDARY_CASES if _gen_prompts else True,
-            generate_negative=_gen_prompts.GENERATE_NEGATIVE_CASES if _gen_prompts else True,
+            prefixes=TEST_USER_PREFIXES,
+            max_cases=MAX_CASES_PER_CLASS,
+            generate_boundary=GENERATE_BOUNDARY_CASES,
+            generate_negative=GENERATE_NEGATIVE_CASES,
         )
         if plan is None:
             print(f"  [Step 2] ❌ LLM 生成失败, 生成最小骨架")
@@ -386,13 +354,13 @@ def _minimal_plan(po_module: str, po_class: str) -> Dict:
 
 
 # ---------------------------------------------------------------------------
-# CLI (可选, 让你能命令行直接跑)
+# CLI (命令行入口; python -m ai_kit.generator / python -m ai_kit.generator.core 都走这里)
 # ---------------------------------------------------------------------------
 
-def _cli():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Phase 3 AI 用例生成器")
     parser.add_argument("--page", required=True, help="页面中文名, 如 '用户管理'")
-    parser.add_argument("--po-module", required=True, help="Page Object 模块名, 如 'pages.user_management_page'")
+    parser.add_argument("--po-module", required=True, help="Page Object 模块全名, 如 'pages.user_management_page'")
     parser.add_argument("--po-class", required=True, help="Page Object 类名, 如 'UserManagementPage'")
     parser.add_argument("--fixture", required=True, help="fixture 名, 如 'user_management_page'")
     parser.add_argument("--tests-dir", default="", help="tests 目录路径")
@@ -410,4 +378,4 @@ def _cli():
 
 
 if __name__ == "__main__":
-    _cli()
+    main()

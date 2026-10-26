@@ -50,46 +50,53 @@ SKIP_CASE_PATTERNS: List[str] = [
 
 
 # ============================================================
-# 📋 生成清单模板 (LLM 先生成这个, 再套 pytest)
+# 角色 System Prompt (硬约束)
 # ============================================================
 
-CASE_PLAN_TEMPLATE = """
-你是一个专业的测试工程师. 根据页面结构, 生成该模块的测试用例清单 (步骤 + 预期).
+GENERATE_PLAN_SYSTEM = """你是一个资深 QA 测试工程师. 根据页面结构和 Page Object 方法, 生成该模块的 pytest 测试用例.
 
-## 页面名称
-{page_name}
+严格约束:
+1. 只能使用提供的 Page Object 方法, 禁止硬编码 .click() / .find_element() / execute_script
+2. 所有测试用户必须用提供的前缀 (避免污染原数据, 方便 teardown 统一清理)
+3. 每个 test 方法必须 try/finally 自我清理 (teardown 用 batch_cleanup 兜底)
+4. severity 四档: BLOCKER > CRITICAL > NORMAL > MINOR
+5. 用中文写 allure.story 标题
+6. 输出严格 JSON, 不要 markdown 代码块标记
+"""
 
-## Page Object 方法签名 (只能用这些方法, 不能硬编码 CSS)
-{po_methods}
+
+# ============================================================
+# 📋 生成清单模板 (LLM 先生成这个, 再套 pytest)
+# 模板用 string.Template 语法: $name 是占位符, 正文里的裸 { } 不需要转义
+# ============================================================
+
+CASE_PLAN_TEMPLATE = """## 页面名称
+$page_name
+
+## 页面结构
+```json
+$page_structure
+```
+
+## Page Object 方法签名 (只能用这些)
+```
+$po_methods
+```
 
 ## fixture
-- driver: webdriver
-- {fixture_name}: Page Object 实例 (已登录)
+- driver
+- $fixture_name: Page Object 实例 (已登录)
 
 ## 用例规则
-- 必须用这些测试用户前缀: {prefixes}
-- 每个类最多 {max_cases} 个用例
-{"- 生成边界值测试 (空/超长/特殊字符)" if GENERATE_BOUNDARY_CASES else "- 不生成边界值测试"}
-{"- 生成逆向测试 (非法参数)" if GENERATE_NEGATIVE_CASES else "- 不生成逆向测试"}
+- 测试用户前缀: $prefixes
+- 每个类最多 $max_cases 个用例
+- 边界值测试: $boundary_rule
+- 逆向测试: $negative_rule
 
-## 输出格式 (严格 JSON)
-{{
-  "classes": [
-    {{
-      "class_name": "Test{ModuleName}{Category}",
-      "category": "add|query|edit|delete|reset|export",
-      "cases": [
-        {{
-          "method": "test_{action}_{desc}",
-          "title": "中文故事标题",
-          "severity": "BLOCKER|CRITICAL|NORMAL|MINOR",
-          "steps": ["步骤1", "步骤2"],
-          "expected": ["预期结果1", "预期结果2"]
-        }}
-      ]
-    }}
-  ]
-}}
+## 输出 JSON 格式
+{"classes": [{"class_name": "Test{Module}{Category}", "category": "",
+"cases": [{"method": "test_xxx", "title": "", "severity": "",
+"steps": ["..."], "expected": ["..."]}}]}]}
 """
 
 
@@ -99,9 +106,10 @@ CASE_PLAN_TEMPLATE = """
 
 PYTEST_CODE_TEMPLATE = '''# -*- coding: utf-8 -*-
 """
-AI 自动生成的测试用例 — {page_name}
-生成时间: {timestamp}
-生成规则: Phase 3 ({boundary_label}, {negative_label})
+AI 自动生成的测试用例 — $page_name
+生成时间: $timestamp
+生成规则: Phase 3 ($boundary_label, $negative_label)
+⚠️ 注意: 方法体里有 TODO, 需要你手动填 Page Object 调用和断言
 """
 import time
 import uuid
@@ -109,17 +117,13 @@ import uuid
 import allure
 import pytest
 
-from pages.{po_module} import {po_class}
+from pages.$po_module import $po_class
 
 
-# ---------------------------------------------------------------------------
-# 工具函数
-# ---------------------------------------------------------------------------
-
-def _fresh_{short}(page, prefix):
+def _fresh_$short(page, prefix):
     """创建一个新用户并确保表格里能查到"""
     suffix = uuid.uuid4().hex[:3]
-    username = f"{{prefix}}_{{suffix}}"
+    username = f"{prefix}_{suffix}"
     page.add_user(username, "Test@123", phone="13900000000")
     time.sleep(0.2)
     page.query_by_username(username)
@@ -127,8 +131,7 @@ def _fresh_{short}(page, prefix):
     return username, row
 
 
-# ===========================================================================
-{test_classes}
+$test_classes
 '''
 
 BOUNDARY_LABEL = "含边界值" if GENERATE_BOUNDARY_CASES else "不含边界值"
