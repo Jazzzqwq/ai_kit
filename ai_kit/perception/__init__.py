@@ -11,6 +11,8 @@
     renderer   : 计划 -> pytest 源码 (po 模式调用 Page Object / standalone 模式用 runtime 原语)
 
 阶段进度: ① collect / ② inventory / ③ archetype / ④ strategies / ⑤ planner 已落地, renderer 待做。
+⑤ 的校验闭环 (5.7) 内置在 planner: schema -> 活页面 -> AST 白名单 -> 去重,
+不过的用例标 needs_review, 不阻塞其他用例。
 
 用法:
     from ai_kit.perception import collect, from_inventory, classify, annotate, expand, plan
@@ -34,6 +36,10 @@
     p.to_dict()["cases"][0]["steps"]            # [{'action': 'fill', 'eid': 'e12', 'value': ...}, ...]
     p.report()                                  # 缺项/跳过/未解析/校验问题 (不进 JSON)
     plan_with_llm(inv)                          # 可选: LLM 改步骤, 过了校验才落地
+
+    v = verify(p, inventory=inv, driver=driver) # 5.7 四层校验: schema / 活页面 / AST / 去重
+    v.review, v.problems                        # 待人工确认的用例 + 问题清单
+    plan_verified(inv, render=renderer.render)  # 校验 + 问题回填重生成 (最多 2 轮)
 """
 from ai_kit.perception.archetype import (
     ARCHETYPES,
@@ -67,19 +73,38 @@ from ai_kit.perception.inventory import (
 )
 from ai_kit.perception.planner import (
     ACTIONS,
+    CASE_KEYS,
+    DUP_THRESHOLD,
     PLANNER_VERSION,
     PRIORITIES,
+    RUNTIME_PRIMITIVES,
+    STEP_KEYS,
     CaseBundle,
+    Duplicate,
+    LintProblem,
     PlanCase,
     Step,
     TestPlan,
+    VerifySummary,
     build_cases,
+    case_from_dict,
+    case_schema_problems,
+    check_live,
+    dedupe_cases,
+    find_duplicates,
+    lint_source,
+    normalize_title,
     plan,
     plan_cache_key,
+    plan_from_dict,
+    plan_verified,
     plan_with_llm,
+    po_methods_from_dir,
     resolve_ref,
     validate_case,
+    validate_schema,
     validate_step,
+    verify,
 )
 from ai_kit.perception.strategies import (
     CHECKLISTS,
@@ -100,11 +125,13 @@ from ai_kit.perception.strategies import (
 __all__ = [
     "ACTIONS",
     "ARCHETYPES",
+    "CASE_KEYS",
     "CHECKLISTS",
     "COLLECT_JS",
     "COLLECTOR_VERSION",
     "DEFAULT_MAX_ELEMENTS",
     "DEFAULT_MAX_HTML",
+    "DUP_THRESHOLD",
     "FINGERPRINT_PREFIX",
     "INVENTORY_VERSION",
     "LLM_CONFIDENCE_THRESHOLD",
@@ -112,41 +139,58 @@ __all__ = [
     "PLANNER_VERSION",
     "PRIORITIES",
     "RISK_LEVELS",
+    "RUNTIME_PRIMITIVES",
+    "STEP_KEYS",
     "STRATEGY_VERSION",
     "TARGETS",
     "ArchetypeResult",
     "Binding",
     "CaseBundle",
     "CaseSeed",
+    "Duplicate",
     "ElementSpec",
     "Expansion",
+    "LintProblem",
     "PageInventory",
     "PlanCase",
     "Step",
     "Strategy",
     "TestPlan",
     "Variant",
+    "VerifySummary",
     "annotate",
     "build_cases",
     "build_options",
     "canonical_dom",
+    "case_from_dict",
+    "case_schema_problems",
+    "check_live",
     "checklist",
     "classify",
     "collect",
     "confirm_with_llm",
+    "dedupe_cases",
     "describe",
     "empty_inventory",
     "expand",
     "find",
+    "find_duplicates",
     "fingerprint_of",
     "from_collect",
     "from_inventory",
     "groups",
+    "lint_source",
     "normalize",
+    "normalize_title",
     "plan",
     "plan_cache_key",
+    "plan_from_dict",
+    "plan_verified",
     "plan_with_llm",
+    "po_methods_from_dir",
     "resolve_ref",
     "validate_case",
+    "validate_schema",
     "validate_step",
+    "verify",
 ]

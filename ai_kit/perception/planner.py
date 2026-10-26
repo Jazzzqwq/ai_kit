@@ -38,11 +38,13 @@ diagnostics (missing / skipped / unresolved / problems) 不进 to_dict: 卡片 s
 """
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 from urllib.parse import urlsplit
 
@@ -327,6 +329,9 @@ class PlanCase:
     cleanup: Tuple[Step, ...] = ()
     cid: str = ""
     expect: Tuple[str, ...] = ()
+    # 5.7: 四层校验仍没过 -> 待人工确认。不进 to_dict: schema 是 ⑥ 的契约,
+    # "这条还没验收"是流水线状态, 不是用例内容。
+    needs_review: bool = False
 
     @property
     def is_destructive(self) -> bool:
@@ -363,7 +368,6 @@ class TestPlan:
     cases: Tuple[PlanCase, ...] = ()
     # 不静默: 缺项/跳过/未解析/校验问题都留在这里, report() 打出来
     diagnostics: Dict[str, Any] = field(default_factory=dict)
-
     # --- 统计 ---
 
     @property
@@ -400,6 +404,11 @@ class TestPlan:
     def require_all(self, priority: str = P0) -> Tuple[PlanCase, ...]:
         return tuple(case for case in self.cases if case.priority == priority)
 
+    @property
+    def review(self) -> Tuple[PlanCase, ...]:
+        """5.7 校验闭环后仍没过的用例 (其余用例照常渲染执行, 不陪绑)"""
+        return tuple(case for case in self.cases if case.needs_review)
+
     # --- 序列化 ---
 
     def to_dict(self) -> Dict[str, Any]:
@@ -427,6 +436,11 @@ class TestPlan:
         for key, title in (("missing", "缺项 (页面上没有的对象, 少测了)"),
                            ("skipped", "跳过 (模板出不了可执行步骤)"),
                            ("unresolved", "未解析取值 (需要人/数据源补)"),
+                           ("schema", "schema 校验 (结构/词表/eid 格式)"),
+                           ("live", "活页面解析 (locator 找不到)"),
+                           ("ast", "AST 白名单 (渲染产物越界)"),
+                           ("duplicates", "去重 (近重复已合并)"),
+                           ("live_skipped", "活页面没查的 (不是失败)"),
                            ("notes", "说明"),
                            ("problems", "校验问题")):
             items = list(self.diagnostics.get(key) or ())
@@ -434,9 +448,15 @@ class TestPlan:
                 continue
             lines.append(f"  {title}: {len(items)}")
             lines.extend(f"    - {item}" for item in items)
-        llm = self.diagnostics.get("llm")
-        if llm:
-            lines.append(f"  LLM: {llm}")
+        pending = self.diagnostics.get("needs_review") or {}
+        if pending:
+            lines.append(f"  需要人工确认: {len(pending)}")
+            for case_id, messages in pending.items():
+                lines.append(f"    - {case_id}: {'; '.join(messages)}")
+        for extra, title in (("verify", "校验闭环"), ("llm", "LLM")):
+            value = self.diagnostics.get(extra)
+            if value:
+                lines.append(f"  {title}: {value}")
         return "\n".join(lines)
 
     def __len__(self) -> int:
@@ -1752,15 +1772,23 @@ def _action_catalog_text() -> str:
     return "\n".join(lines)
 
 
-def _llm_prompt(inv: PageInventory, current: TestPlan, cases: Sequence[PlanCase]) -> str:
+def _llm_prompt(inv: PageInventory, current: TestPlan, cases: Sequence[PlanCase],
+                errors: Optional[Mapping[str, Sequence[str]]] = None) -> str:
+    """errors: 上一轮校验的问题 (5.7 的回填重生成); 不传就是一次性改写"""
     payload = [{"case_id": case.case_id, "cid": case.cid, "title": case.title,
                 "expect": list(case.expect),
                 "steps": [step.to_dict() for step in case.steps]} for case in cases]
-    return (f"页面: {inv.url}\n原型: {current.archetype}\n\n"
+    text = (f"页面: {inv.url}\n原型: {current.archetype}\n\n"
             f"## 动作词表\n{_action_catalog_text()}\n\n"
             f"## 页面清单\n{json.dumps(_slim_inventory(inv), ensure_ascii=False)}\n\n"
             f"## 现有用例 (可以改步骤, 不能改 case_id/title/期望)\n"
             f"{json.dumps(payload, ensure_ascii=False)}")
+    if errors:
+        detail = [{"case_id": case_id, "problems": list(messages)}
+                  for case_id, messages in errors.items()]
+        text += ("\n\n## 上次校验没通过的地方 (逐条改掉, 没问题的步骤别动)\n"
+                 + json.dumps(detail, ensure_ascii=False))
+    return text
 
 
 def _ask_llm(prompt: str) -> Any:
@@ -1770,19 +1798,21 @@ def _ask_llm(prompt: str) -> Any:
     return client.chat_json(PLANNER_SYSTEM, prompt, max_retries=0)
 
 
-def _steps_from(raw: Any) -> Optional[Tuple[Step, ...]]:
-    """LLM 给的步骤 -> Step; 结构不对就整条拒掉 (不让半截东西进计划)"""
+def _steps_from(raw: Any, field_name: str = "steps"
+                ) -> Tuple[Optional[Tuple[Step, ...]], Tuple[str, ...]]:
+    """LLM 给的步骤 -> Step; 有一个键不对就整条拒掉 (不让半截东西进计划)
+
+    解析走 ① 的 step_from_dict: 生成侧和校验侧必须是同一套口径 —— 两边各写一份,
+    就会出现「改写能进计划、存成 JSON 再读回来却过不了校验」这种自相矛盾。
+    """
+    if raw is None:
+        return (), ()
     if not isinstance(raw, (list, tuple)) or not raw:
-        return None
-    steps: List[Step] = []
-    for item in raw:
-        if not isinstance(item, Mapping):
-            return None
-        action = str(item.get("action") or "").strip()
-        if not action:
-            return None
-        steps.append(Step(action, str(item.get("eid") or "").strip(), item.get("value")))
-    return tuple(steps)
+        return None, (f"{field_name} 结构不对, 要非空数组",)
+    steps, problems = _steps_of(raw, field_name)
+    if problems:
+        return None, tuple(problems)
+    return steps, ()
 
 
 def plan_with_llm(inventory: Any, *, ask: Optional[Callable[[str], Any]] = None,
@@ -1813,35 +1843,843 @@ def plan_with_llm(inventory: Any, *, ask: Optional[Callable[[str], Any]] = None,
         diagnostics["problems"] = problems
         return replace(base, diagnostics=diagnostics)
 
-    by_id = {case.case_id: case for case in base.cases}
-    merged = list(base.cases)
+    merged, accepted, rejected = _merge_rewrites(inv, base.cases, items, problems)
+    diagnostics["llm"] = f"接受 {accepted} 条, 拒绝 {rejected} 条"
+    diagnostics["problems"] = problems
+    return replace(base, cases=tuple(merged), model=model or base.model,
+                   diagnostics=diagnostics)
+
+
+# ---------------------------------------------------------------------------
+# 5.7 校验闭环: ① schema -> ② 活页面 -> ③ AST 白名单 -> ④ 去重
+# ---------------------------------------------------------------------------
+#
+# 四层各看一个东西, 少一层就会有一类错误漏到执行阶段:
+#   ① 只看计划自己 (必填键 / 优先级取值 / 动作词表 / eid 语法), 不碰页面;
+#   ② 拿清单里的定位串去活页面 find_elements —— 采集时看见的元素, 现在还在吗;
+#   ③ 看 ⑥ 的渲染产物: 白名单外的调用 (eval / subprocess / 编出来的 PO 方法) 不放过;
+#   ④ 同一件事写两遍的用例, 跑起来只会让失败数翻倍。
+# 每层只产出「问题」, 处置在上层: 有问题就回填 prompt 重生成 (最多 2 次),
+# 还不过就标 needs_review —— 卡住一条, 不能卡住整页。
+
+PLAN_KEYS: Tuple[str, ...] = ("page", "archetype", "profile", "model",
+                              "prompt_version", "generated_at", "cases")
+CASE_KEYS: Tuple[str, ...] = ("case_id", "title", "priority", "tags", "preconditions",
+                              "test_data", "steps", "cleanup")
+STEP_KEYS: Tuple[str, ...] = ("action", "eid", "value")
+CASE_ID_RE = re.compile(r"^[A-Z]{2}-\d{3,}$")
+# 元素/表格/弹窗的 id: 采集器发的是 e0/c0/d1, 但计划也可能吃手写清单 (f1/u1), 只管形状
+_ELEMENT_ID_RE = re.compile(r"^[A-Za-z]\w*$")
+
+
+def eid_format_problem(ref: Any) -> str:
+    """① eid 是不是清单引用的语法 (它在不在清单里由 ② 管, 不在这里报)
+
+    只形状校验: e12 / c0 / d1 是采集器的叫法, 手写清单的 f1/u1 同样能用 ——
+    在这里卡死字母前缀, 会把非采集器来源的全部计划判成错。
+    """
+    text = str(ref or "").strip()
+    if not text:
+        return "eid 是空串"
+    if text == PAGE_REF:
+        return ""
+    if text.startswith("chart:"):
+        index = _as_int(text.split(":", 1)[1])
+        return "" if index >= 1 else f"{text!r} 的图表序号要从 1 开始"
+    for sep in (".column:", ".row:"):
+        if sep in text:
+            head, _, tail = text.partition(sep)
+            if not _ELEMENT_ID_RE.match(head):
+                return f"{text!r} 的表格 eid {head!r} 不合法 (字母开头, 不含分隔符)"
+            if not tail.strip():
+                return f"{text!r} 的表格引用要写成 c1{sep}<名字>"
+            if any(other in tail for other in (".column:", ".row:")):
+                return f"{text!r} 的列名/按钮名里不能再嵌表格引用"
+            return ""
+    if ":" in text or "." in text:
+        return (f"{text!r} 不是合法引用: 只认 e1 / c1 / d1 / c1.column:列名 / "
+                f"c1.row:按钮 / chart:1 / page")
+    if not _ELEMENT_ID_RE.match(text):
+        return f"{text!r} 的 eid 要以字母开头, 只含字母/数字/_"
+    return ""
+
+
+def step_from_dict(raw: Any) -> Tuple[Optional[Step], str]:
+    """JSON 里的一步 -> Step; 返回 (步骤, 问题)
+
+    多一个键就要拒不收: 出现 locator / timeout 这类键, 说明有人把 ⑥ 的活干到计划里了。
+    """
+    if not isinstance(raw, Mapping):
+        return None, f"步骤不是对象: {type(raw).__name__}"
+    extra = [str(key) for key in raw if key not in STEP_KEYS]
+    if extra:
+        return None, f"步骤出现卡片外的键 {extra}: 定位串/等待时间不该写进计划"
+    action = str(raw.get("action") or "").strip()
+    if not action:
+        return None, "步骤缺少 action"
+    return Step(action, str(raw.get("eid") or "").strip(), raw.get("value")), ""
+
+
+def _steps_of(raw: Any, field_name: str) -> Tuple[Tuple[Step, ...], List[str]]:
+    if raw is None:
+        return (), []
+    if not isinstance(raw, (list, tuple)):
+        return (), [f"{field_name} 要是数组, 拿到 {type(raw).__name__}"]
+    steps: List[Step] = []
+    problems: List[str] = []
+    for index, item in enumerate(raw, 1):
+        step, problem = step_from_dict(item)
+        if problem:
+            problems.append(f"{field_name} {index}: {problem}")
+            continue
+        steps.append(step)                     # type: ignore[arg-type]
+    return tuple(steps), problems
+
+
+def case_schema_problems(case: PlanCase) -> Tuple[str, ...]:
+    """① 的单条版本 (validate_schema / 重生成合并 / ⑥ 读缓存都走这里)"""
+    problems: List[str] = []
+    if not CASE_ID_RE.match(case.case_id or ""):
+        problems.append(f"case_id {case.case_id!r} 不符合 XY-001 的编号规则")
+    if not str(case.title or "").strip():
+        problems.append("缺少 title")
+    if case.priority not in PRIORITIES:
+        problems.append(f"优先级 {case.priority!r} 不在 P0..P3 里")
+    if not case.steps:
+        problems.append("没有步骤")
+    if not case.tags:
+        problems.append("缺少 tags")
+    for index, step in enumerate((*case.steps, *case.cleanup), 1):
+        action = ACTIONS.get(step.action)
+        if action is None:
+            problems.append(f"步骤 {index}: 未知动作 {step.action!r}, 动作词表里没有")
+        if step.eid:
+            problem = eid_format_problem(step.eid)
+            if problem:
+                problems.append(f"步骤 {index}: {problem}")
+        elif action is not None and action.eid == "req":
+            problems.append(f"步骤 {index}: {step.action} 缺少 eid")
+    return tuple(problems)
+
+
+def validate_schema(target: Any) -> Tuple[str, ...]:
+    """① JSON schema: 必填键 / 取值类型 / action 白名单 / eid 格式
+
+    跑在 ② 之前, 因为它不需要页面: 计划是从 LLM 或 JSON 回来的, 先看结构对不对,
+    再拿页面验证 —— 结构错的计划去碰页面只会得到一堆看不懂的 NoSuchElement。
+    """
+    if isinstance(target, Mapping):
+        return plan_from_dict(target)[1]
+    if not isinstance(target, TestPlan):
+        return (f"不是 TestPlan: {type(target).__name__}",)
+    problems: List[str] = []
+    for case in target.cases:
+        problems.extend(f"{case.case_id or '(无编号)'}: {message}"
+                        for message in case_schema_problems(case))
+    return tuple(problems)
+
+
+def case_from_dict(raw: Any) -> Tuple[Optional[PlanCase], Tuple[str, ...]]:
+    """JSON 用例 -> PlanCase; 结构不可救才返回 None (能构造的都留, 问题带出去)
+
+    救回来的理由: 一条缺 title 的用例依然有步骤, 人补个标题就能跑; 直接丢掉等于
+    把「表里有 8 条, 计划里只剩 6 条」这种账留给下一个人去对。
+    """
+    if not isinstance(raw, Mapping):
+        return None, (f"用例不是对象: {type(raw).__name__}",)
+    problems: List[str] = []
+    missing = [key for key in CASE_KEYS if key not in raw]
+    if missing:
+        problems.append(f"缺少必填键 {missing}")
+    extra = [str(key) for key in raw if key not in CASE_KEYS and key not in ("cid", "expect")]
+    if extra:
+        problems.append(f"出现卡片外的键 {extra}")
+    steps, step_problems = _steps_of(raw.get("steps"), "steps")
+    cleanup, cleanup_problems = _steps_of(raw.get("cleanup"), "cleanup")
+    problems.extend(step_problems + cleanup_problems)
+    data = raw.get("test_data")
+    tags = raw.get("tags")
+    preconditions = raw.get("preconditions")
+    case = PlanCase(
+        case_id=str(raw.get("case_id") or "").strip(),
+        title=str(raw.get("title") or "").strip(),
+        priority=str(raw.get("priority") or P1).strip(),
+        tags=tuple(str(tag) for tag in tags) if isinstance(tags, (list, tuple)) else (),
+        preconditions=(tuple(str(item) for item in preconditions)
+                       if isinstance(preconditions, (list, tuple)) else ()),
+        test_data=dict(data) if isinstance(data, Mapping) else {},
+        steps=steps,
+        cleanup=cleanup,
+        cid=str(raw.get("cid") or "").strip(),
+        expect=tuple(str(item) for item in raw.get("expect") or ()),
+    )
+    if data is not None and not isinstance(data, Mapping):
+        problems.append(f"test_data 要是对象, 拿到 {type(data).__name__}")
+    for field_name in ("tags", "preconditions"):
+        value = raw.get(field_name)
+        if value is not None and not isinstance(value, (list, tuple)):
+            problems.append(f"{field_name} 要是数组, 拿到 {type(value).__name__}")
+    return case, tuple(problems)
+
+
+def plan_from_dict(payload: Any) -> Tuple[Optional[TestPlan], Tuple[str, ...]]:
+    """卡片 5.6 的 JSON -> TestPlan (⑥ 读缓存 / 人改计划后回灌都走这里)"""
+    if not isinstance(payload, Mapping):
+        return None, (f"计划不是 JSON object: {type(payload).__name__}",)
+    problems: List[str] = [f"计划出现卡片外的键 [{key}]"
+                           for key in payload if key not in PLAN_KEYS]
+    raw_cases = payload.get("cases")
+    if not isinstance(raw_cases, (list, tuple)):
+        return None, tuple(problems + ["cases 必须是数组"])
+    cases: List[PlanCase] = []
+    for index, raw in enumerate(raw_cases, 1):
+        case, case_problems = case_from_dict(raw)
+        problems.extend(f"用例 {index}: {message}" for message in case_problems)
+        if case is not None:
+            cases.append(case)
+    plan_ = TestPlan(
+        page=str(payload.get("page") or ""),
+        archetype=str(payload.get("archetype") or UNKNOWN),
+        profile=str(payload.get("profile") or ""),
+        model=str(payload.get("model") or ""),
+        prompt_version=str(payload.get("prompt_version") or PLANNER_VERSION),
+        generated_at=str(payload.get("generated_at") or ""),
+        cases=tuple(cases),
+    )
+    return plan_, tuple(problems)
+
+
+# ---------------------------------------------------------------------------
+# ② 活页面解析: 清单里的定位串现在还找得到元素吗
+# ---------------------------------------------------------------------------
+
+def _by_of(name: str) -> str:
+    """定位策略名 -> selenium 的 By 字符串 (采集器写的 by 缺失时才用)"""
+    key = _flat(name)
+    return "xpath" if ("xpath" in key or key == "text") else "css selector"
+
+
+def _locator_pairs(record: Any) -> List[Tuple[str, str]]:
+    """一条记录 (ElementSpec / 表格 dict / 弹窗 dict) -> [(by, locator), ...]"""
+    if isinstance(record, ElementSpec):
+        pairs = [(_by_of(record.locator_by.get(name) or name), locator)
+                 for name, locator in record.locators.items() if locator]
+        return pairs or [(record.selector_by, record.selector)]
+    locators = record.get("locators")
+    raw_bys = record.get("locator_by")
+    pairs: List[Tuple[str, str]] = []
+    if isinstance(locators, Mapping):
+        for name, locator in locators.items():
+            by = raw_bys.get(name) if isinstance(raw_bys, Mapping) else ""
+            text = str(locator or "")
+            if text:
+                pairs.append((str(by or _by_of(str(name))), text))
+    if pairs:
+        return pairs
+    selector = str(record.get("selector") or "")
+    return [("css selector", selector)] if selector else []
+
+
+def _row_action_xpath(label: str) -> str:
+    """行内按钮没 eid 时 (被折叠的行) 只能按文案找 —— 这也是它唯一的身份"""
+    text = str(label or "").replace('"', "'")
+    return (f'//button[normalize-space()="{text}"] | //a[normalize-space()="{text}"]'
+            f' | //*[@role="button"][normalize-space()="{text}"]')
+
+
+def _live_find(driver: Any, pairs: Sequence[Tuple[str, str]]) -> bool:
+    """逐条定位串试一次; 任意一条命中就算元素还在 (定位漂移交给 healer)"""
+    for by, locator in pairs:
+        try:
+            if driver.find_elements(by, locator):
+                return True
+        except Exception:                # noqa: BLE001 — 单条定位串失效不算事故
+            continue
+    return False
+
+
+def _record_by_eid(inv: PageInventory, eid: str) -> Optional[Mapping]:
+    for record in (*inv.tables, *inv.dialogs):
+        if str(record.get("eid") or "") == eid:
+            return record
+    return None
+
+
+def check_live(inventory: Any, refs: Iterable[str], driver: Any) -> Tuple[List[str], List[str]]:
+    """② eid 活页面解析检查; 返回 (问题, 查不了的项)
+
+    查不了的 (列标题 / 图表) 单独记, 不冒充失败: 用假的「找不到」去凑数, 只会训练
+    人忽略这份报告。driver 传 None 就整层跳过, 并说明。
+    """
+    inv = inventory if isinstance(inventory, PageInventory) else from_inventory(inventory)
+    if driver is None:
+        return [], ["没有 driver, 活页面这一层没跑"]
+    problems: List[str] = []
+    skipped: List[str] = []
+    for ref in dict.fromkeys(str(item) for item in refs if item):
+        target = resolve_ref(inv, ref)
+        if target is None:
+            problems.append(f"{ref}: 清单里没有这个引用")
+            continue
+        if target.kind == "page":
+            continue
+        if target.kind == "column":
+            skipped.append(f"{ref}: 列标题不是可交互元素 (由 sort/assert_sorted 覆盖)")
+            continue
+        if target.kind == "chart":
+            skipped.append(f"{ref}: 图表没有独立定位串 (渲染器按 canvas/svg 序号找)")
+            continue
+        if target.kind == "row-action" and not target.eid:
+            if not _live_find(driver, [("xpath", _row_action_xpath(target.text))]):
+                problems.append(f"{ref}: 活页面上找不到文案为『{target.text}』的行内按钮")
+            continue
+        record: Any = inv.element(target.eid) if target.eid else None
+        if record is None and target.eid:
+            record = _record_by_eid(inv, target.eid)
+        if record is None:
+            problems.append(f"{ref}: 清单里没有 {target.eid}")
+            continue
+        pairs = _locator_pairs(record)
+        if not pairs:
+            skipped.append(f"{ref}: 记录里没有定位串")
+            continue
+        if not _live_find(driver, pairs):
+            problems.append(f"{ref}: 清单里的定位串在活页面上一个都找不到")
+    return problems, skipped
+
+
+# ---------------------------------------------------------------------------
+# ③ AST 白名单: 渲染产物 (⑥) 只准碰这些东西
+# ---------------------------------------------------------------------------
+#
+# 这份清单必须和 runtime/__init__.py 一起改: 加了一个原语却没登记, 渲染产物会在
+# ③ 被拦下 —— 这是故意的, 白名单的意义就是「两边都认了才能用」。
+
+RUNTIME_PRIMITIVES: Tuple[str, ...] = (
+    # actions (带失败上下文, 替代裸 selenium 调用)
+    "click", "fill", "clear", "select_option", "check", "uncheck", "press_key",
+    "get_text", "get_value", "goto", "reload", "back",
+    # asserts
+    "assert_visible", "assert_hidden", "assert_text", "assert_value", "assert_count",
+    "assert_attr", "assert_no_error_toast", "assert_no_alert",
+    # waits (替代 time.sleep)
+    "wait_visible", "wait_clickable", "wait_text", "wait_gone",
+)
+
+# 自由函数调用: 内置函数够渲染器拼字符串/算数就行
+_SAFE_BUILTINS = frozenset((
+    "print", "len", "str", "int", "float", "bool", "range", "enumerate", "zip",
+    "list", "dict", "tuple", "set", "sorted", "any", "all", "min", "max", "sum",
+    "round", "abs", "repr", "isinstance", "getattr",
+))
+
+# 普通 Python 方法 (容器/字符串/pathlib): 两种模式都放行
+_PY_METHODS = frozenset((
+    "append", "extend", "insert", "pop", "get", "items", "keys", "values", "update",
+    "setdefault", "copy", "join", "split", "splitlines", "strip", "lstrip", "rstrip",
+    "replace", "lower", "upper", "startswith", "endswith", "format", "encode", "decode",
+    "read_text", "write_text", "exists", "mkdir", "with_suffix", "resolve", "isoformat",
+    "strftime", "sleep", "dumps", "loads", "group", "search", "match", "findall", "sub",
+    "fullmatch", "partition", "fromkeys", "index", "count", "sort", "reverse", "close",
+))
+
+# pytest 的调用面: 渲染产物是测试文件, 它当然要能断言/参数化
+_PYTEST_METHODS = frozenset((
+    "raises", "fail", "skip", "xfail", "warns", "approx", "mark", "fixture",
+    "parametrize", "importorskip",
+))
+
+# selenium 的方法: 只在 po 模式放行 (PO 内部本来就是这些;
+# standalone 必须走 runtime 原语, 否则 ③ 就失去意义)
+_SELENIUM_METHODS = frozenset((
+    "find_element", "find_elements", "get", "send_keys", "text", "get_attribute",
+    "get_property", "get_dom_attribute", "is_displayed", "is_enabled", "is_selected",
+    "submit", "current_url", "title", "page_source", "refresh", "back", "forward",
+    "quit", "close", "switch_to", "execute_script", "execute_async_script",
+    "implicitly_wait", "until", "add_argument", "maximize_window", "set_window_size",
+    "save_screenshot", "value_of_css_property", "tag_name", "location",
+    "visibility_of_element_located", "presence_of_element_located", "element_to_be_clickable",
+    "text_to_be_present_in_element", "invisibility_of_element_located", "staleness_of",
+))
+
+# 打死不许出现的东西 (白名单之外再补一层黑名单: 白名单漏一个就是洞)
+BANNED_CALLS = frozenset(("eval", "exec", "compile", "open", "__import__", "input",
+                          "globals", "locals", "vars", "breakpoint"))
+BANNED_METHODS = frozenset(("system", "popen", "remove", "unlink", "rmdir", "rmtree",
+                            "kill", "fork", "spawn", "setattr", "delattr"))
+# 属性调用单独一份: `page.open()` 是 PO 的标准入口, 不能因为裸 open() 被禁就跟着禁
+BANNED_ATTRS = frozenset(("eval", "exec", "compile", "__import__")) | BANNED_METHODS
+
+# import 前缀白名单: 渲染产物是测试代码, 不是脚本
+# "ai_kit" 是为了 `from ai_kit import runtime`; 真正该导的只有 runtime 子模块
+ALLOWED_IMPORT_PREFIXES: Tuple[str, ...] = (
+    "selenium", "pytest", "ai_kit", "pages", "json", "os", "re", "time",
+    "datetime", "pathlib", "typing", "dataclasses", "csv", "math", "string",
+    "collections", "contextlib", "functools", "itertools", "io", "tempfile", "uuid",
+)
+
+
+@dataclass(frozen=True)
+class LintProblem:
+    """③ 的一条问题; 带行号, 不然改起来靠猜"""
+
+    line: int
+    message: str
+
+    def __str__(self) -> str:
+        return f"第 {self.line} 行: {self.message}"
+
+
+def _imported_modules(node: ast.AST) -> List[str]:
+    """import 语句里出现的模块名; 相对 import (level > 0) 交给调用方放行"""
+    if isinstance(node, ast.Import):
+        return [alias.name for alias in node.names]
+    if isinstance(node, ast.ImportFrom):
+        if node.level:
+            return []                  # from .pages import X: 同一个包, 不算越界
+        return [node.module or ""]
+    return []
+
+
+def _own_functions(tree: ast.AST) -> set:
+    """本文件定义的函数/方法: 渲染器自己的辅助函数不该被当成越界调用"""
+    return {node.name for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+
+
+def _call_problem(node: ast.Call, mode: str, primitives: set, py_names: set,
+                  po_names: set, own_names: set) -> str:
+    func = node.func
+    if isinstance(func, ast.Name):
+        name = func.id
+        if name in BANNED_CALLS:
+            return f"不许调用 {name}()"
+        if name in own_names or name in primitives or name in _SAFE_BUILTINS:
+            return ""
+        if not mode:
+            return ""
+        return (f"{name}() 不在白名单: {mode} 模式只准用 runtime 原语 / "
+                f"内置函数 / 本文件定义的辅助函数")
+    if not isinstance(func, ast.Attribute):
+        return ""
+    name = func.attr
+    if name in BANNED_ATTRS:
+        return f"不许调用 .{name}()"
+    if not mode:
+        return ""
+    if name in py_names or name in own_names:
+        return ""
+    receiver = func.value.id if isinstance(func.value, ast.Name) else ""
+    if mode == "standalone":
+        if name in primitives:
+            if receiver in ("runtime", "rt"):
+                return ""
+            return (f".{name}() 必须走 runtime.{name}(...): standalone 模式只准用 "
+                    f"runtime 原语, 不直接碰 selenium 对象")
+        return (f".{name}() 越界: standalone 模式只准用 runtime 原语 "
+                f"(runtime.{name}(...) 或先在 runtime 里登记这个原语)")
+    if name in primitives or name in _SELENIUM_METHODS or name in _PYTEST_METHODS:
+        return ""
+    if name in po_names or receiver == "self":
+        return ""
+    return f".{name}() 不是 pages/ 里的 PO 方法 (po 模式只收 PO 方法 + runtime 原语)"
+
+
+def lint_source(source: str, *, mode: str = "", po_methods: Iterable[str] = (),
+                allow_calls: Iterable[str] = ()) -> Tuple[LintProblem, ...]:
+    """③ AST 白名单检查: 渲染出来的测试代码能不能进仓库
+
+    mode="po"          调用的方法必须在 pages/ 里存在 (po_methods / po_methods_from_dir)
+    mode="standalone"  动作只能走 runtime 原语, 不直接碰 selenium 对象
+    mode=""            只查危险调用与 import (还没定模式时的最弱检查)
+    """
+    text = str(source or "")
+    if not text.strip():
+        return (LintProblem(1, "源码是空的"),)
+    if mode not in ("", "po", "standalone"):
+        return (LintProblem(1, f"未知渲染模式 {mode!r}: 只认 po / standalone"),)
+    try:
+        tree = ast.parse(text)
+    except SyntaxError as exc:
+        return (LintProblem(exc.lineno or 1, f"源码解析失败: {exc.msg}"),)
+    primitives = set(RUNTIME_PRIMITIVES) | {str(name) for name in allow_calls if name}
+    po_names = {str(name) for name in po_methods if name}
+    py_names = set(_PY_METHODS) | _PYTEST_METHODS if mode == "po" else set(_PY_METHODS)
+    own_names = _own_functions(tree)
+    # 从 pages 导入的类本身要能实例化 (PO 模式的第一个动作就是 `XxxPage(driver)`)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("pages"):
+            primitives.update(alias.asname or alias.name for alias in node.names)
+    problems: List[LintProblem] = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            for module in _imported_modules(node):
+                if not module or module == "__future__":
+                    continue
+                if any(module == prefix or module.startswith(prefix + ".")
+                       for prefix in ALLOWED_IMPORT_PREFIXES):
+                    continue
+                problems.append(LintProblem(
+                    node.lineno,
+                    f"不许 import {module}: 渲染产物只碰 selenium / runtime / pages / 标准库"))
+        elif isinstance(node, ast.Call):
+            problem = _call_problem(node, mode, primitives, py_names, po_names, own_names)
+            if problem:
+                problems.append(LintProblem(node.lineno, problem))
+    return tuple(problems)
+
+
+def po_methods_from_dir(directory: Any) -> Tuple[str, ...]:
+    """扫 pages/ 下的 .py 收集方法名 (只读不执行: 被测项目的代码不该在这一步跑起来)
+
+    po 模式的 ③ 就拿它当准入清单: 用例里出现 pages/ 没有的方法, 就是渲染器编了方法名。
+    """
+    root = Path(str(directory or ""))
+    if not root.is_dir():
+        return ()
+    names = set()
+    for path in sorted(root.rglob("*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, SyntaxError):
+            continue
+        names.update(_own_functions(tree))
+    return tuple(sorted(names))
+
+
+# ---------------------------------------------------------------------------
+# ④ 去重: 标题归一化 + 步骤序列 Jaccard
+# ---------------------------------------------------------------------------
+
+DUP_THRESHOLD = 0.8
+
+_TITLE_NOISE = re.compile(
+    r"[\s\-—_`~!@#$%^&*()+=|\\:;\"'<>,.?/\[\]{}、，。；：！？（）【】《》“”‘’·]+")
+
+
+def normalize_title(title: Any) -> str:
+    """标题归一化: 去标点/空白 + 全小写。「患者列表 - 姓名查询。」和
+    「患者列表姓名查询」是同一条用例的两个写法。"""
+    return _TITLE_NOISE.sub("", str(title or "")).lower()
+
+
+def step_tokens(case: PlanCase) -> Tuple[str, ...]:
+    """一条用例的步骤序列特征 (动作 + 引用 + 取值), 清洗步骤也算进去"""
+    tokens = []
+    for step in (*case.steps, *case.cleanup):
+        value = "" if step.value is None else str(step.value)
+        tokens.append(f"{step.action}@{step.eid}={value}")
+    return tuple(tokens)
+
+
+def jaccard(left: Iterable[str], right: Iterable[str]) -> float:
+    first, second = set(left), set(right)
+    if not first and not second:
+        return 1.0
+    if not first or not second:
+        return 0.0
+    return len(first & second) / len(first | second)
+
+
+@dataclass(frozen=True)
+class Duplicate:
+    """④ 的判定结果: 留哪条、丢哪条、为什么
+
+    带两条用例的标题: 只报 case_id 的话, 看报告的人无从判断「这两个东西真的是
+    同一件事吗, 还是模板退化了」—— 而后者才是必须回修的。
+    """
+
+    keep: str
+    drop: str
+    similarity: float
+    reason: str
+    keep_title: str = ""
+    drop_title: str = ""
+
+    def __str__(self) -> str:
+        keep = f"{self.keep}《{_clip(self.keep_title)}》"
+        drop = f"{self.drop}《{_clip(self.drop_title)}》"
+        return (f"{drop} 与 {keep} 近重复 ({self.reason}, "
+                f"相似度 {self.similarity:.2f}), 已合并")
+
+
+def _clip(text: Any, limit: int = 26) -> str:
+    value = str(text or "")
+    return value if len(value) <= limit else value[:limit] + "…"
+
+
+def _priority_rank(priority: str) -> int:
+    return PRIORITIES.index(priority) if priority in PRIORITIES else len(PRIORITIES)
+
+
+def dedupe_cases(cases: Sequence[PlanCase], threshold: float = DUP_THRESHOLD
+                 ) -> Tuple[Tuple[PlanCase, ...], Tuple[Duplicate, ...]]:
+    """④ 标题归一化相同, 或步骤序列 Jaccard > threshold -> 判近重复
+
+    保留优先级高的 (同优先级留先出现的): 两条几乎一样时, 那条 P0 才是要看的。
+    返回 (保留的用例, 删掉的判定), 删了哪条必须能说出来 —— 静默去重比不去重更坏。
+    """
+    kept: List[PlanCase] = []
+    found: List[Duplicate] = []
+    for case in cases:
+        title = normalize_title(case.title)
+        best: Optional[PlanCase] = None
+        score = 0.0
+        reason = ""
+        for other in kept:
+            if title and title == normalize_title(other.title):
+                best, score, reason = other, 1.0, "标题归一化后相同"
+                break
+            value = jaccard(step_tokens(case), step_tokens(other))
+            if value > threshold and value > score:
+                best, score, reason = other, value, f"步骤序列 Jaccard {value:.2f}"
+        if best is None:
+            kept.append(case)
+            continue
+        if _priority_rank(case.priority) < _priority_rank(best.priority):
+            kept[kept.index(best)] = case
+            found.append(Duplicate(case.case_id, best.case_id, score,
+                                   reason + ", 留优先级更高的",
+                                   keep_title=case.title, drop_title=best.title))
+        else:
+            found.append(Duplicate(best.case_id, case.case_id, score, reason,
+                                   keep_title=best.title, drop_title=case.title))
+    return tuple(kept), tuple(found)
+
+
+def find_duplicates(cases: Sequence[PlanCase],
+                    threshold: float = DUP_THRESHOLD) -> Tuple[Duplicate, ...]:
+    """只报告不合并 (想先看一眼再决定删哪条时用)"""
+    return dedupe_cases(cases, threshold)[1]
+
+
+# ---------------------------------------------------------------------------
+# 汇总: 四层跑完 -> 带 needs_review 标记的计划
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class VerifySummary:
+    """四层各报了几条 (进 report, 也验证「哪一层真的跑了」)"""
+
+    schema: int = 0
+    live: int = 0
+    ast: int = 0
+    duplicates: int = 0
+    review: int = 0
+
+    def __str__(self) -> str:
+        return (f"① schema {self.schema} / ② 活页面 {self.live} / "
+                f"③ AST {self.ast} / ④ 合并 {self.duplicates} / "
+                f"待确认 {self.review}")
+
+
+def _as_sources(raw: Any, cases: Sequence[PlanCase]) -> Dict[str, str]:
+    """渲染产物 -> case_id -> 源码。按序给 list 也收 (⑥ 的渲染器两种都可能返回)"""
+    if isinstance(raw, Mapping):
+        return {str(key): str(value) for key, value in raw.items() if value}
+    if isinstance(raw, (list, tuple)):
+        return {case.case_id: str(source) for case, source in zip(cases, raw) if source}
+    return {}
+
+
+def _render_sources(render: Callable[[TestPlan], Any], target: TestPlan
+                    ) -> Tuple[Optional[Dict[str, str]], str]:
+    """调渲染器 -> (sources, 失败说明)。渲染爆了不该让校验也爆"""
+    try:
+        return _as_sources(render(target), target.cases), ""
+    except Exception as exc:            # noqa: BLE001 — 渲染器有 bug, 但校验要继续
+        return None, f"渲染失败, ③ AST 没跑: {exc}"
+
+
+def verify(plan_: TestPlan, *, inventory: Any = None, driver: Any = None,
+           mode: str = "", po_methods: Iterable[str] = (),
+           sources: Any = None,
+           dedupe: bool = True, threshold: float = DUP_THRESHOLD) -> TestPlan:
+    """四层校验闭环的纯函数版: 原计划 -> 带问题/标记的新计划 (不改入参)
+
+    sources: case_id -> 渲染出来的源码 (⑥ 给的); 不传就跳过 ③ 并说明。
+    inventory 不传只能跑 ①: 没有清单就无从解析引用, 拿空清单硬跑只会满屏假问题。
+    """
+    if not isinstance(plan_, TestPlan):
+        raise TypeError(f"verify 需要 TestPlan, 拿到 {type(plan_).__name__}")
+    inv = (inventory if isinstance(inventory, PageInventory)
+           else from_inventory(inventory) if inventory is not None else None)
+    diagnostics = dict(plan_.diagnostics)
+    by_case: Dict[str, List[str]] = {}
+
+    def note(case_id: str, message: str) -> None:
+        bucket = by_case.setdefault(case_id, [])
+        if message not in bucket:
+            bucket.append(message)
+
+    # ① schema: 不需要页面, 先看结构
+    schema_lines = list(validate_schema(plan_))
+    diagnostics["schema"] = schema_lines
+    for case in plan_.cases:
+        for message in case_schema_problems(case):
+            note(case.case_id, message)
+
+    # ② 引用校验 (静态) + 活页面 find_element
+    live_lines: List[str] = []
+    live_skipped: List[str] = []
+    if inv is None:
+        live_skipped = ["没有元素清单, ② 引用/活页面校验没跑"]
+    else:
+        for case in plan_.cases:
+            for message in validate_case(inv, case):
+                live_lines.append(f"{case.case_id}: {message}")
+                note(case.case_id, message)
+        refs = [step.eid for case in plan_.cases
+                for step in (*case.steps, *case.cleanup) if step.eid]
+        found, live_skipped = check_live(inv, refs, driver)
+        for line in found:
+            ref = line.split(":", 1)[0].strip()
+            for case in plan_.cases:
+                if any(step.eid == ref for step in (*case.steps, *case.cleanup)):
+                    note(case.case_id, line.split(": ", 1)[-1])
+                    break
+        live_lines.extend(found)
+    diagnostics["live"] = live_lines
+    diagnostics["live_skipped"] = live_skipped
+
+    # ③ AST 白名单: 只看渲染产物
+    ast_lines: List[str] = []
+    rendered = _as_sources(sources, plan_.cases) if sources else {}
+    if rendered:
+        for case in plan_.cases:
+            source = rendered.get(case.case_id)
+            if not source:
+                continue
+            for problem in lint_source(source, mode=mode, po_methods=po_methods):
+                ast_lines.append(f"{case.case_id}: {problem}")
+                note(case.case_id, str(problem))
+    else:
+        diagnostics["ast_skipped"] = "没有渲染产物 (sources), ③ AST 这一层没跑"
+    diagnostics["ast"] = ast_lines
+
+    # ④ 去重: 合并是修复, 不算失败
+    cases, duplicates = dedupe_cases(plan_.cases) if dedupe else (plan_.cases, ())
+    diagnostics["duplicates"] = [str(dup) for dup in duplicates]
+
+    kept_ids = {case.case_id for case in cases}
+    final: List[PlanCase] = []
+    for case in cases:
+        messages = by_case.get(case.case_id) or []
+        # 两个方向都要写: 上一轮标记过的用例这一轮过了, 就得摘掉标记;
+        # 只置位不清位, 重生成修好的用例会永远留在待确认队列里。
+        final.append(replace(case, needs_review=bool(messages)))
+    diagnostics["needs_review"] = {case_id: messages
+                                   for case_id, messages in by_case.items()
+                                   if case_id in kept_ids}
+
+    problems = list(diagnostics.get("problems") or ())
+    problems.extend(schema_lines)
+    problems.extend(live_lines)
+    problems.extend(ast_lines)
+    diagnostics["problems"] = list(dict.fromkeys(problems))
+    diagnostics["verify"] = str(VerifySummary(
+        schema=len(schema_lines), live=len(live_lines), ast=len(ast_lines),
+        duplicates=len(duplicates), review=len(diagnostics["needs_review"])))
+    return replace(plan_, cases=tuple(final), diagnostics=diagnostics)
+
+
+# ---------------------------------------------------------------------------
+# ⑤ 闭环: 校验不过 -> 把问题回填 prompt 重生成 (最多 max_retries 次)
+# ---------------------------------------------------------------------------
+
+def _merge_rewrites(inv: Optional[PageInventory], cases: Sequence[PlanCase],
+                    items: Sequence[Any], problems: List[str]
+                    ) -> Tuple[List[PlanCase], int, int]:
+    """LLM/人改过的步骤 -> 回填。逐条过 ① schema + ② 引用校验
+
+    只改 steps/cleanup: case_id/title/期望/优先级是骨架, 改了等于换了条用例,
+    后面按 case_id 做的缓存和报告全部对不上。
+    """
+    position_of = {case.case_id: index for index, case in enumerate(cases)}
+    merged = list(cases)
     accepted = rejected = 0
     for item in items:
         if not isinstance(item, Mapping):
             rejected += 1
             continue
         case_id = str(item.get("case_id") or "").strip()
-        case = by_id.get(case_id)
-        if case is None:
+        position = position_of.get(case_id)
+        if position is None:
             rejected += 1
             problems.append(f"LLM 返回了计划里没有的 {case_id!r}")
             continue
-        steps = _steps_from(item.get("steps"))
-        cleanup = _steps_from(item.get("cleanup")) or ()
-        if steps is None:
+        steps, step_problems = _steps_from(item.get("steps"))
+        cleanup, cleanup_problems = _steps_from(item.get("cleanup"), "cleanup")
+        if "steps" not in item or steps is None or cleanup_problems:
             rejected += 1
-            problems.append(f"{case_id} (LLM): 步骤结构不对, 保留确定性步骤")
+            detail = list(step_problems) + list(cleanup_problems)
+            problems.append(f"{case_id} (LLM): 步骤结构不对, 保留确定性步骤"
+                            + (f" ({'; '.join(detail)})" if detail else ""))
             continue
-        candidate = replace(case, steps=steps, cleanup=cleanup)
-        bad = validate_case(inv, candidate)
+        candidate = replace(merged[position], steps=steps, cleanup=cleanup,
+                            needs_review=False)
+        bad = list(case_schema_problems(candidate))
+        if inv is not None:
+            bad.extend(validate_case(inv, candidate))
         if bad:
             rejected += 1
-            problems.extend(f"{case_id} (LLM): {message}" for message in bad)
+            problems.extend(f"{case_id} (LLM): {message}"
+                            for message in dict.fromkeys(bad))
             continue
-        merged[merged.index(case)] = candidate
+        merged[position] = candidate
         accepted += 1
+    return merged, accepted, rejected
 
-    diagnostics["llm"] = f"接受 {accepted} 条, 拒绝 {rejected} 条"
-    diagnostics["problems"] = problems
-    return replace(base, cases=tuple(merged), model=model or base.model,
-                   diagnostics=diagnostics)
+
+def plan_verified(inventory: Any, *, ask: Optional[Callable[[str], Any]] = None,
+                  max_retries: int = 2, mode: str = "", po_methods: Iterable[str] = (),
+                  render: Optional[Callable[[TestPlan], Mapping[str, str]]] = None,
+                  driver: Any = None, dedupe: bool = True,
+                  threshold: float = DUP_THRESHOLD, **kwargs: Any) -> TestPlan:
+    """确定性计划 -> 四层校验 -> 问题回填重生成 (最多 max_retries 次) -> needs_review
+
+    render 传了才有 ③: 计划还不是代码, 没渲染就没 AST 可查。
+    ask 传了才重生成: 纯规则路径的失败只能靠人, 拿同一套模板重试只会得到同一个错。
+    重生成只动没过的用例, 已经过的不会因为隔壁一条失败而被重写 (回归 diff 会炸)。
+    """
+    inv = inventory if isinstance(inventory, PageInventory) else from_inventory(inventory)
+    options: Dict[str, Any] = dict(inventory=inv, driver=driver, mode=mode,
+                                   po_methods=po_methods, dedupe=dedupe,
+                                   threshold=threshold)
+    base = plan(inv, **kwargs)
+    sources, render_error = (_render_sources(render, base) if render else (None, ""))
+    current = verify(base, sources=sources, **options)
+    attempts: List[str] = [f"渲染失败: {render_error}"] if render_error else []
+    for attempt in range(1, max(0, int(max_retries)) + 1):
+        pending = dict(current.diagnostics.get("needs_review") or {})
+        if not pending:
+            break
+        if ask is None:
+            attempts.append(f"第 {attempt} 轮: 没有 ask, 不重生成")
+            break
+        targets = [case for case in current.cases if case.case_id in pending]
+        try:
+            answer = ask(_llm_prompt(inv, current, targets, errors=pending))
+        except Exception as exc:                # noqa: BLE001 — LLM 挂了不该让闭环崩
+            attempts.append(f"第 {attempt} 轮: 调用失败 ({exc})")
+            break
+        items = answer.get("cases") if isinstance(answer, Mapping) else answer
+        if not isinstance(items, (list, tuple)) or not items:
+            attempts.append(f"第 {attempt} 轮: 没有可用的返回")
+            break
+        problems: List[str] = []
+        merged, accepted, rejected = _merge_rewrites(inv, current.cases, items, problems)
+        attempts.append(f"第 {attempt} 轮: 接受 {accepted} 条, 拒绝 {rejected} 条")
+        if accepted == 0:
+            break
+        diagnostics = dict(current.diagnostics)
+        diagnostics["problems"] = list(diagnostics.get("problems") or ()) + problems
+        updated = replace(current, cases=tuple(merged), diagnostics=diagnostics)
+        sources, render_error = (_render_sources(render, updated) if render else (None, ""))
+        if render_error:
+            attempts.append(render_error)
+        current = verify(updated, sources=sources, **options)
+    diagnostics = dict(current.diagnostics)
+    tail = f"重生成 {len(attempts)} 轮, 待人工确认 {len(current.review)} 条"
+    diagnostics["verify"] = ("; ".join(attempts) + " -> " + tail) if attempts else tail
+    return replace(current, diagnostics=diagnostics)
