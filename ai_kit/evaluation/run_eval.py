@@ -26,7 +26,8 @@ _OUT_DIR = os.environ.get("AI_KIT_REPORT_DIR") or os.getcwd()
 _SUITES = {"healer": eval_healer, "analyzer": eval_analyzer, "generator": eval_generator}
 
 
-def run(use_llm: bool = False, suites: List[str] = None) -> Dict[str, Any]:
+def run(use_llm: bool = False, suites: List[str] = None,
+        include_flywheel: bool = True) -> Dict[str, Any]:
     suites = suites or ["healer", "analyzer", "generator"]
 
     # 自愈需要浏览器; 归因的截图多模态也需要 (仅 --llm)。能起就共享一个。
@@ -43,7 +44,8 @@ def run(use_llm: bool = False, suites: List[str] = None) -> Dict[str, Any]:
             if name == "generator":
                 reports[name] = mod.run(use_llm=use_llm)
             elif name == "analyzer":
-                reports[name] = mod.run(use_llm=use_llm, driver=driver)
+                reports[name] = mod.run(use_llm=use_llm, driver=driver,
+                                        include_flywheel=include_flywheel)
             else:  # healer
                 reports[name] = mod.run(use_llm=use_llm, driver=driver)
     finally:
@@ -55,6 +57,7 @@ def run(use_llm: bool = False, suites: List[str] = None) -> Dict[str, Any]:
             "use_llm": use_llm,
             "driver_available": driver is not None,
             "suites": suites,
+            "include_flywheel": include_flywheel,
         },
         "reports": reports,
     }
@@ -111,7 +114,9 @@ def _md(report: Dict[str, Any]) -> str:
     if a:
         lines.append("## 2. 归因评测 (分类准确率 + 置信度校准)")
         rule = a["rule"]
-        lines.append(f"- 样本: {a['n']} 条")
+        origin = (f" (手写 {a['n_manual']} + 飞轮 {a['n_flywheel']})"
+                  if a.get("n_flywheel") else "")
+        lines.append(f"- 样本: {a['n']} 条{origin}")
         lines.append(f"- **Phase-1 规则**: 准确率 {_pct(rule['accuracy'])} | 平均置信 {rule['avg_confidence']} | ECE {rule['calibration']['ece']}")
         b = a.get("blame")
         if b:
@@ -182,6 +187,8 @@ def main():
     parser.add_argument("--llm", action="store_true", help="调用真实 LLM (有成本/慢/非确定)")
     parser.add_argument("--suite", default="healer,analyzer,generator",
                         help="逗号分隔: healer,analyzer,generator")
+    parser.add_argument("--no-flywheel", action="store_true",
+                        help="不并入数据飞轮正样本 (退回手写黄金集基线, 便于对比)")
     parser.add_argument("--out", default=os.path.join(_OUT_DIR, "ai_evaluation_report.md"))
     parser.add_argument("--json", default=os.path.join(_OUT_DIR, "ai_evaluation_report.json"))
     args = parser.parse_args()
@@ -194,7 +201,7 @@ def main():
         pass
 
     suites = [s.strip() for s in args.suite.split(",") if s.strip()]
-    report = run(use_llm=args.llm, suites=suites)
+    report = run(use_llm=args.llm, suites=suites, include_flywheel=not args.no_flywheel)
 
     with open(args.json, "w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False, indent=2, default=str)

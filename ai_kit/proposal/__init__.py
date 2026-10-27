@@ -11,6 +11,8 @@
     report     : 人工确认用单文件 HTML 报告 (失败现场 + 诊断 + 方案, 含 report.json)
     applier    : 六步应用 (干净 -> 备份 -> 补丁 -> 单 nodeid 验证 -> verified/rejected
                  -> decisions.jsonl); 只改 pages/ tests/ config/, 一次失败只应用一个方案
+    flywheel   : 账本 -> 黄金数据 (verified 正样本 / rejected 负样本), 每周导出进
+                 evaluation/golden/, 评测集随使用增长
 
 6.1 已落地 diagnoser。用法:
 
@@ -72,4 +74,15 @@ note}。不做 Web 控制台: 报告是一张能发出去的纸, 决策是命令
 
 硬约束: 绝不自动应用 (只有人敲 --accept 才改文件); 单次失败最多应用 1 个方案;
 断言变更 (assertion_update) 恒 auto_applicable=false, 必须人审。
+
+6.6 数据飞轮: decisions.jsonl 本身就是带标签的数据, 每周导一次:
+
+    python -m ai_kit.proposal.flywheel --decisions decisions.jsonl \\
+        --reports artifacts/ --since 2026-10-20 --dry-run
+
+verified (采纳且重跑通过) -> evaluation/golden/flywheel_positive.json, 与手写
+analyzer case 同形, run_eval 默认把它并入归因评测 (--no-flywheel 退回手写基线)。
+rejected (人拒 / 采纳但验证不过) -> flywheel_negative.json, 带 rejected_reason;
+它不进任何分母 —— reject 只说这个方案不对, 不说明归因错了。导出幂等 (重复跑只追加
+新条目), 缺 report.json 的决策跳过并点名: 现场没了就补不出样本, 宁可少一条。
 """

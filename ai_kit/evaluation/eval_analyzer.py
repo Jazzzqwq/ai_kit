@@ -20,11 +20,34 @@ from ai_kit.proposal import diagnoser as _blame
 
 _GOLDEN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden")
 _FIXTURES = os.path.join(_GOLDEN, "fixtures")
+_MANUAL = "analyzer_cases.json"
+# 6.6 数据飞轮: 人采纳并验证通过的补丁 -> 正样本, 与手写 case 同形
+_FLYWHEEL = "flywheel_positive.json"
 
 
-def _load_cases() -> List[Dict[str, Any]]:
-    with open(os.path.join(_GOLDEN, "analyzer_cases.json"), encoding="utf-8") as f:
-        return json.load(f)["cases"]
+def _read_cases(name: str) -> List[Dict[str, Any]]:
+    """读一份 golden 文件; 不存在 = 空 (飞轮文件只在导出过一次后才存在)"""
+    path = os.path.join(_GOLDEN, name)
+    if not os.path.isfile(path):
+        return []
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    cases = data.get("cases") if isinstance(data, dict) else None
+    return [c for c in cases if isinstance(c, dict)] if isinstance(cases, list) else []
+
+
+def _load_cases(include_flywheel: bool = True) -> List[Dict[str, Any]]:
+    """手写黄金集 + 飞轮正样本 (6.6)
+
+    飞轮 case 与手写 analyzer case 同形 (traceback / log / expected_category), 合并时
+    只标 origin, 不改字段 —— 它照常进 accuracy 与 ECE 的分母, 评测集随使用增长。
+    没有 expected_category 的条目跳过: 空期望值会让准确率虚高。
+    """
+    cases = [dict(c, origin="manual") for c in _read_cases(_MANUAL)]
+    if include_flywheel:
+        cases += [dict(c, origin="flywheel") for c in _read_cases(_FLYWHEEL)
+                  if str(c.get("expected_category") or "").strip()]
+    return cases
 
 
 def _render_screenshot_b64(driver, fixture_name: str) -> Optional[str]:
@@ -69,6 +92,7 @@ def _eval_mode(cases: List[Dict[str, Any]], use_llm: bool,
         calib.append((diag.confidence, correct))
         case_rows.append({
             "id": c["id"],
+            "origin": c.get("origin", "manual"),
             "expected": expected,
             "predicted": predicted,
             "confidence": round(diag.confidence, 3),
@@ -136,16 +160,20 @@ def _eval_blame(cases: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-def run(use_llm: bool = False, driver=None) -> Dict[str, Any]:
-    cases = _load_cases()
+def run(use_llm: bool = False, driver=None,
+        include_flywheel: bool = True) -> Dict[str, Any]:
+    cases = _load_cases(include_flywheel)
 
     # 规则模式 (始终跑, 0 成本)
     rule = _eval_mode(cases, use_llm=False, driver=None)
 
+    n_flywheel = sum(1 for c in cases if c.get("origin") == "flywheel")
     result: Dict[str, Any] = {
         "suite": "analyzer",
         "status": "OK",
         "n": len(cases),
+        "n_manual": len(cases) - n_flywheel,
+        "n_flywheel": n_flywheel,
         "rule": rule,
         "blame": _eval_blame(cases),
     }
