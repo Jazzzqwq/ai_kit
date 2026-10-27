@@ -170,6 +170,13 @@
       "screenshot_fixture": "form_error.html",
       "expected_category": "产品缺陷",
       "note": "--llm 多模态辅助确认无提示"
+    },
+    {
+      "id": "A25_ambiguous_timeout_locator",
+      "traceback": "selenium.common.exceptions.TimeoutException: Message: timeout: no such element: Unable to locate element: {\"method\":\"css selector\",\"selector\":\"#kw\"}",
+      "log": "wait_until_clickable retried 10s, element never appeared",
+      "expected_category": "脚本-定位器问题",
+      "note": "超时与定位串同时命中: 规则先命中超时, 人判定位器 —— 6.2 的容错样本"
     }
   ]
 }

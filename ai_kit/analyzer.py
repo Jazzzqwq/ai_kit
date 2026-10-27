@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 
 @dataclass
@@ -81,6 +81,10 @@ def normalize_category(raw: str) -> str:
 # ---------------------------------------------------------------------------
 # Phase 1: 规则表 (从上到下先命中先返回)
 # ---------------------------------------------------------------------------
+
+# 规则表 / 关键词表 改动就把版本 +1: 评测结果里要记它, 回归时才说得清"这一条基线
+# 是哪一版规则判的"。方案层还叠着自己的 blame 投影版本, 两段一起写进 rule_version。
+RULES_VERSION = "rules.v1"
 
 _RULES: List = [
     (["SyntaxError", "ModuleNotFoundError", "ImportError"],
@@ -184,6 +188,21 @@ LLM_SYSTEM_PROMPT = """你是一个专业的 Selenium UI 自动化测试失败�
 输出严格 JSON 格式 (不要 markdown 代码块):
 {"category": "...", "confidence": 0.xx, "summary": "一句话根因", "suggestion": "具体处理步骤"}
 """
+
+
+def matched_categories(text: str) -> Tuple[str, ...]:
+    """命中了哪些分类 (按规则表顺序去重)
+
+    与 diagnose() 的区别只有一点: diagnose 只报第一名, 这里报"还像哪些" —— 方案层
+    用它判歧义 (定位器 / 等待 同时命中时, 两个结论都该被评审接受)。不是第二套口径,
+    用的还是同一张 _RULES, 不会两边各说各话。
+    """
+    seen: List[str] = []
+    for patterns, category, *_rest in _RULES:
+        if category not in seen and any(re.search(p, text, re.IGNORECASE)
+                                        for p in patterns):
+            seen.append(category)
+    return tuple(seen)
 
 
 def diagnose_with_llm(traceback_text: str, log_text: str = "", screenshot_base64: Optional[str] = None) -> Optional[FailureDiagnosis]:

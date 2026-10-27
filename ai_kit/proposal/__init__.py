@@ -3,7 +3,8 @@
 方案层 — 失败之后"给出可执行修复", 而不是只给一句建议
 
 模块:
-    diagnoser  : FailureDiagnosis v2 (category/confidence/blame/evidence/...)
+    diagnoser  : FailureDiagnosis v2 (category/blame/confidence/root_cause/evidence/
+                 source/rule_version/acceptable_categories)
                  + blame 三分类 (product / environment / test_code) -> decide()
                  + 两个终态产物 (缺陷单草稿 / 环境检查清单)
     solutions  : 修复方案类型学 (改定位器/加等待/改断言/提缺陷/修环境) + 生成器
@@ -21,4 +22,7 @@
     decision = decide(diagnosis)
     if decision.may_edit_test_code:
         require_patch_allowed(diagnosis)       # 不是 test_code 会直接抛
+
+6.2 的两个字段是给评测用的: rule_version 记"哪版规则 + 哪版 blame 投影"判的,
+acceptable_categories 列"另一个评审也会点头"的分类 (评测容错)。
 """

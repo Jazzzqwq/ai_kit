@@ -113,6 +113,10 @@ def _md(report: Dict[str, Any]) -> str:
         rule = a["rule"]
         lines.append(f"- 样本: {a['n']} 条")
         lines.append(f"- **Phase-1 规则**: 准确率 {_pct(rule['accuracy'])} | 平均置信 {rule['avg_confidence']} | ECE {rule['calibration']['ece']}")
+        b = a.get("blame")
+        if b:
+            lines.append(f"- **blame 层 (6.2)**: 规则版本 {b['rule_version']} | 分类一致率 {_pct(b['accuracy'])} | "
+                         f"容错后 {_pct(b['tolerant_accuracy'])} (宽容 {b['n_tolerated']} 条) | 分布 {b['blame_counts']}")
         if a.get("llm"):
             llm = a["llm"]
             cmp = a["compare"]

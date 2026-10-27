@@ -26,6 +26,16 @@ blame; Phase 2 沿用 analyzer 的机制: 规则置信度 < 0.8 才调 LLM, LLM 
     快照显示页面正常/报错才给 0.9, 只剩残留弹窗则压到 0.6 —— 弹窗是产品没关掉还是
     测试没清理, 规则分不出来。
 
+6.2 的 FailureDiagnosis v2 比 v1 多三件事 (都在 dataclass 里, 有测试锁着):
+
+    root_cause            具体到能照着改 ("保存按钮文案由 确定 改为 提交")。v1 的
+                          summary 只到"断言不匹配"这一级, 评测比对和缺陷单都用不上。
+    rule_version          规则表 + blame 投影表的版本。评测结果里记它, 回归时才说得清
+                          基线是哪一版; 改表必须和它一起 +1。
+    acceptable_categories 另一个评审也会点头的分类 (定位器 / 等待 同时命中, 残留弹窗让
+                          产品 / 脚本两头都可能)。它只给评测开容错, 不放宽规则结论, 也不
+                          许放 unknown —— 猜不出来不能被宽容, 否则选 unknown 每次都算对。
+
 账本: 要把这次判断记进成本就把 llm 传成 meter 包装过的调用, 例如
     llm = meter(partial(chat_json, max_retries=1, temperature=0.1, max_tokens=800),
                 tag="blame")
@@ -48,7 +58,7 @@ __all__ = [
     "BLAME_PRODUCT", "BLAME_ENVIRONMENT", "BLAME_TEST_CODE", "BLAME_UNKNOWN",
     "BLAMES",
     "PROPOSAL_PRODUCT_BUG", "PROPOSAL_ENV_ISSUE", "PROPOSAL_PATCH",
-    "THRESHOLD", "TEMPERATURE", "MAX_TOKENS",
+    "THRESHOLD", "TEMPERATURE", "MAX_TOKENS", "BLAME_VERSION", "RULE_VERSION",
     "PageObservation", "FailureContext", "FailureDiagnosis", "Decision",
     "BugDraft", "EnvChecklist", "TestCodeEditRefused",
     "diagnose", "blame_by_rules", "blame_with_llm", "decide",
@@ -80,6 +90,11 @@ THRESHOLD = 0.8
 TEMPERATURE = 0.1
 MAX_TOKENS = 800
 
+# 版本: 评测结果里记 rule_version, 回归时才知道这条基线是哪一版判的。
+# 规则表在 analyzer 里, blame 投影与歧义判据在本模块 —— 两段都写进去, 少一段就说不清。
+BLAME_VERSION = "blame.v1"
+RULE_VERSION = f"{analyzer.RULES_VERSION}+{BLAME_VERSION}"
+
 # 六类标签 -> blame。页面打不开时才允许在这几类上改判成环境问题 (语法错误不在此列:
 # 代码都没跑起来, 页面观测不到东西是必然的, 不能因此怪环境)
 _BLAME_BY_CATEGORY: Dict[str, str] = {
@@ -96,6 +111,9 @@ _EXECUTION_CATEGORIES = frozenset({
     analyzer.CATEGORY_SCRIPT_HEALER,
     analyzer.CATEGORY_SCRIPT_WAIT,
 })
+
+# 定位器 vs 等待 是最常见的"两个都对"的歧义: 超时信息里往往也带着元素定位串
+_SCRIPT_CATEGORIES = (analyzer.CATEGORY_SCRIPT_HEALER, analyzer.CATEGORY_SCRIPT_WAIT)
 
 # 页面探针: 每个字段一条 CSS (逗号并成一次查询)。失败后每多查一次就多等一个
 # implicit wait, 所以三条探针而不是九条。
@@ -197,42 +215,56 @@ class FailureContext:
 
 @dataclass(frozen=True)
 class FailureDiagnosis:
-    """v2: 在 category 之外多一个 blame, 并由 blame 决定下一步动作
+    """v2: category 之外多一个 blame, 并由 blame 决定下一步动作
 
     category 沿用 analyzer 的六类标签 (报告/统计不换口径), blame 才是决策依据。
+
+    与 6.2 卡片 schema 的两处差异, 都是有意的:
+      - evidence / acceptable_categories 用 tuple: 这个对象是 frozen 的, 可变字段会让
+        "同一份诊断"被谁改过都查不出来; 要 list 的地方 (JSON / 报告) 走 as_dict()。
+      - 多留 suggestion (v1 就有): 环境检查清单与报告要给它, 不是 v2 要删的东西。
     """
 
-    blame: str
+    category: str                        # 六类标签之一 (analyzer.CATEGORIES)
+    blame: str                           # test_code | product | environment | unknown
     confidence: float
-    category: str = analyzer.CATEGORY_UNKNOWN
-    summary: str = ""
+    root_cause: str = ""                 # 具体到能照着改, 不是"断言不匹配"
     evidence: Tuple[str, ...] = ()
     suggestion: str = ""
-    source: str = "rule"        # rule (Phase1) / llm (Phase2)
+    source: str = "rule"                 # rule (Phase1) / llm (Phase2)
+    rule_version: str = RULE_VERSION     # 规则表 + blame 投影的版本 (评测回归用)
+    acceptable_categories: Tuple[str, ...] = ()     # 另一个评审也会点头的分类
 
     @property
     def is_certain(self) -> bool:
         """规则/LLM 自己有把握 (>= 闸门) —— 报告里可以当结论用"""
         return self.confidence >= THRESHOLD
 
+    @property
+    def is_ambiguous(self) -> bool:
+        """还有别的分类也说得通: 报告要标出来, 别让"看起来确定"盖住分歧"""
+        return bool(self.acceptable_categories)
+
     def as_dict(self) -> Dict[str, Any]:
         return {
+            "category": self.category,
             "blame": self.blame,
             "confidence": round(self.confidence, 4),
-            "category": self.category,
-            "summary": self.summary,
+            "root_cause": self.root_cause,
             "evidence": list(self.evidence),
             "suggestion": self.suggestion,
             "source": self.source,
+            "rule_version": self.rule_version,
+            "acceptable_categories": list(self.acceptable_categories),
         }
 
     def __str__(self) -> str:
-        """一行流: 该算谁的 + 分类 + 置信度 + 根因
+        """一行流: 该算谁的 + 分类 + 置信度 + 具体根因
 
         runtime._diagnose() 会直接 str() 后打进失败信息 (归因: ...), 所以这一行
         必须自包含 —— 不能在报告里只剩下一个 blame 单词。
         """
-        return f"{self.blame} ({self.category}, 置信 {self.confidence:.2f}): {self.summary}"
+        return f"{self.blame} ({self.category}, 置信 {self.confidence:.2f}): {self.root_cause}"
 
 
 @dataclass(frozen=True)
@@ -287,13 +319,72 @@ class TestCodeEditRefused(RuntimeError):
 # Phase 1: 规则 (复用 analyzer 的六类规则表)
 # ---------------------------------------------------------------------------
 
+def _detail_line(text: str, limit: int = 160) -> str:
+    """异常自己那句话: traceback / 日志里的最后一行非空内容
+
+    栈帧全是同样的框架路径, 只有末行说得出"到底哪一步不对"。
+    """
+    lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]
+    if not lines:
+        return ""
+    last = lines[-1]
+    return last if len(last) <= limit else last[:limit] + "..."
+
+
+def _root_cause(context: FailureContext, *, blame: str,
+                observation: Optional[PageObservation], fallback: str) -> str:
+    """具体根因: 异常末行 + 页面上的原文, 退化到规则根因
+
+    卡片要的是"按钮文案由 X 改为 Y"这一级 —— 规则层给不出这么细, 但异常原句和页面
+    提示文本都是事实, 拼起来就够开发照着查。真没线索时不硬编, 明说缺什么。
+    """
+    parts = []
+    if blame == BLAME_PRODUCT and observation is not None and observation.text:
+        parts.append(f"页面提示「{observation.text}」")
+    if (blame == BLAME_ENVIRONMENT and observation is not None
+            and not observation.reachable):
+        parts.append("页面已不可访问 (driver 报错)")
+    detail = _detail_line(context.traceback) or _detail_line(context.log)
+    if detail:
+        parts.append(detail)
+    if parts:
+        return "; ".join(parts)[:300]
+    if fallback:
+        return f"缺少具体线索 (只有笼统信号: {fallback})"
+    return "缺少具体线索 (没有 traceback / 日志)"
+
+
+def _acceptable_categories(text: str, category: str, blame: str,
+                           observation: Optional[PageObservation]) -> Tuple[str, ...]:
+    """规则层看得见的歧义 —— "另一个评审也会点头"的分类, 只给评测开容错
+
+    两条红线: 不放 unknown (猜不出来不能被宽容, 否则选 unknown 每次都算对), 不放自己。
+    歧义必须有证据, 不是"多列几个总能中一个"。
+    """
+    others = []
+    if category in _SCRIPT_CATEGORIES:
+        # 超时信息里常带着定位串 ("timeout: no such element"), 两个结论都成立
+        hits = [c for c in _SCRIPT_CATEGORIES if c in analyzer.matched_categories(text)]
+        if len(hits) == 2:
+            others.extend(c for c in hits if c != category)
+    if (blame == BLAME_PRODUCT and observation is not None
+            and observation.dialogs
+            and not observation.messages and not observation.field_errors):
+        # 残留弹窗: 产品没关掉 / 脚本没清理或被遮挡, 两条路都说得通
+        others.append(analyzer.CATEGORY_SCRIPT_HEALER)
+    return tuple(c for c in dict.fromkeys(others)
+                 if c != category and c != analyzer.CATEGORY_UNKNOWN)[:2]
+
+
 def blame_by_rules(context: FailureContext) -> FailureDiagnosis:
     """纯规则归因, 不调 LLM
 
-    六类标签来自 analyzer (信号表只维护一份), 本函数只做三件事: 投影成 blame、
-    用页面快照修正断言类结论、把置信度拉回 [0, 1]。
+    六类标签来自 analyzer (信号表只维护一份), 本函数只做四件事: 投影成 blame、
+    用页面快照修正断言类结论、把置信度拉回 [0, 1]、给出具体根因与可容错分类。
+    所有判断都能追到一条 evidence —— 报告里每一句都得查得到出处。
     """
-    rule = analyzer.diagnose(f"{context.traceback}\n{context.log}", use_llm=False)
+    text = f"{context.traceback}\n{context.log}"
+    rule = analyzer.diagnose(text, use_llm=False)
     blame = _BLAME_BY_CATEGORY.get(rule.category, BLAME_UNKNOWN)
     category = rule.category
     # analyzer 的置信度是 0.7 + 0.1 * 命中数, 单条命中原样算出来是 0.7999999999999999
@@ -332,13 +423,16 @@ def blame_by_rules(context: FailureContext) -> FailureDiagnosis:
                 f"(可能是产品没关掉, 也可能是测试没清理)")
 
     return FailureDiagnosis(
+        category=category,
         blame=blame,
         confidence=min(max(confidence, 0.0), 1.0),
-        category=category,
-        summary=summary,
+        root_cause=_root_cause(context, blame=blame, observation=observation,
+                               fallback=summary),
         evidence=tuple(evidence),
         suggestion=rule.suggestion,
         source="rule",
+        rule_version=RULE_VERSION,
+        acceptable_categories=_acceptable_categories(text, category, blame, observation),
     )
 
 
@@ -355,6 +449,10 @@ LLM_SYSTEM = """你在判断一次 UI 自动化失败到底该算谁的。只输
 3. confidence 要诚实: 0.5 上下表示两边都像; 判不出来就选 未知-待人工分析, 不要猜。
 4. 你的结论会直接决定下一步动作: 判成 产品缺陷 就只能出缺陷单, 判成 环境问题 就只能
    先修环境, 只有判成 脚本-* 才允许改测试代码。所以没有证据别往脚本问题上倒。
+5. root_cause 要具体到能照着改: 点名元素 / 文案 / 接口 / 异常原句 (例如「保存按钮文案由
+   确定 改为 提交」), 不许写「断言不匹配」这种笼统话; 信息不够就说清缺哪条证据。
+6. acceptable_categories 最多 2 个, 只填「另一个评审也会点头」的分类; 不许放
+   未知-待人工分析, 也不许重复 category。没有把握并列就留空数组。
 
 判断口径:
 - 产品缺陷: 断言不匹配, 但页面能开、没有崩溃或遮罩残留, 也就是页面行为确实和预期不符;
@@ -366,7 +464,9 @@ LLM_SYSTEM = """你在判断一次 UI 自动化失败到底该算谁的。只输
 - 未知-待人工分析: 以上都不像, 或信息不够。
 
 输出 schema:
-{"category": "产品缺陷", "confidence": 0.8, "summary": "一句话根因", "suggestion": "下一步怎么做"}
+{"category": "产品缺陷", "confidence": 0.8,
+ "root_cause": "保存接口返回 200 但列表无新记录, 页面也没有任何提示文案",
+ "suggestion": "检查后端字段校验与前端提示", "acceptable_categories": []}
 """
 
 
@@ -445,6 +545,26 @@ def _as_confidence(value: Any) -> float:
     return min(max(number, 0.0), 1.0)
 
 
+def _llm_categories(raw: Any, own: str) -> Tuple[str, ...]:
+    """LLM 报的容错分类: 归一 -> 只留六类 -> 去掉自己和 unknown -> 最多两个
+
+    模型偶尔会把整张表都列一遍, 那种容错等于没有评测; 所以只收能归一到六类的, 并且
+    只留前两个。unknown 同样不收 —— 猜不出来不能被宽容。
+    """
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, (list, tuple)):
+        return ()
+    out: list = []
+    for item in raw:
+        category = analyzer.normalize_category(item)
+        if (category in analyzer.CATEGORIES
+                and category not in (own, analyzer.CATEGORY_UNKNOWN)
+                and category not in out):
+            out.append(category)
+    return tuple(out[:2])
+
+
 def blame_with_llm(context: FailureContext,
                    llm: Optional[Callable[..., Any]] = None
                    ) -> Optional[FailureDiagnosis]:
@@ -472,14 +592,21 @@ def blame_with_llm(context: FailureContext,
     if category not in _BLAME_BY_CATEGORY:
         print(f"  [blame] LLM 给了认不出的分类 {category!r}, 降级回规则结果")
         return None
+    # v1 叫 summary, v2 叫 root_cause; 两个键都认, 免得换个 prompt 就丢根因
+    root_cause = str(result.get("root_cause") or result.get("summary") or "").strip()
+    if not root_cause:
+        # 模型没给根因也不留空: 异常末行至少是事实, 报告里不能剩一个空字符串
+        root_cause = _detail_line(context.traceback) or "LLM 未给出根因"
     return FailureDiagnosis(
+        category=category,
         blame=_BLAME_BY_CATEGORY[category],
         confidence=_as_confidence(result.get("confidence")),
-        category=category,
-        summary=str(result.get("summary") or ""),
+        root_cause=root_cause,
         evidence=(f"LLM 判为 {category}",),
         suggestion=str(result.get("suggestion") or ""),
         source="llm",
+        rule_version=RULE_VERSION,
+        acceptable_categories=_llm_categories(result.get("acceptable_categories"), category),
     )
 
 
@@ -591,7 +718,7 @@ def _headline(context: FailureContext, diagnosis: FailureDiagnosis) -> str:
     last = lines[-1] if lines else ""
     if last and len(last) <= 120:
         return last
-    return diagnosis.summary or "页面行为与预期不符"
+    return diagnosis.root_cause or "页面行为与预期不符"
 
 
 def bug_draft(context: FailureContext, diagnosis: FailureDiagnosis) -> BugDraft:

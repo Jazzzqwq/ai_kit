@@ -20,7 +20,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, fields
 
 import pytest
 
@@ -121,7 +121,7 @@ def test_an_unreachable_page_turns_the_assertion_into_an_environment_issue():
     assert diag.blame == BLAME_ENVIRONMENT
     assert diag.category == analyzer.CATEGORY_ENV
     assert diag.confidence >= D.THRESHOLD
-    assert "不可访问" in diag.summary
+    assert "不可访问" in diag.root_cause
 
 
 # ---------------------------------------------------------------------------
@@ -377,7 +377,7 @@ def test_no_configured_key_degrades_instead_of_crashing(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def diag_of(blame: str) -> D.FailureDiagnosis:
-    return D.FailureDiagnosis(blame=blame, confidence=0.9)
+    return D.FailureDiagnosis(category=analyzer.CATEGORY_UNKNOWN, blame=blame, confidence=0.9)
 
 
 def test_product_only_produces_a_bug_report():
@@ -435,8 +435,9 @@ def test_bug_draft_has_a_title_and_the_repro_steps():
 
 def test_bug_draft_falls_back_to_the_rule_summary_without_a_traceback():
     context = ctx("", case_id="LC-009")
-    diagnosis = D.FailureDiagnosis(blame=BLAME_PRODUCT, confidence=0.9,
-                                   summary="断言不匹配 (功能行为与预期不一致)")
+    diagnosis = D.FailureDiagnosis(category=analyzer.CATEGORY_PRODUCT_BUG,
+                                   blame=BLAME_PRODUCT, confidence=0.9,
+                                   root_cause="断言不匹配 (功能行为与预期不一致)")
 
     draft = D.bug_draft(context, diagnosis)
 
@@ -638,5 +639,176 @@ def test_str_is_one_self_contained_line():
     line = str(diag)
 
     assert "\n" not in line
-    for part in (BLAME_PRODUCT, analyzer.CATEGORY_PRODUCT_BUG, "0.90", "断言不匹配"):
+    for part in (BLAME_PRODUCT, analyzer.CATEGORY_PRODUCT_BUG, "0.90", "实际 0 行"):
         assert part in line
+
+
+# ---------------------------------------------------------------------------
+# 6.2: FailureDiagnosis v2 —— root_cause / rule_version / acceptable_categories
+# ---------------------------------------------------------------------------
+
+def test_the_schema_carries_the_fields_the_card_asks_for():
+    """卡片要求的最小字段集: 少一个, 评测/报告就得自己再拼一遍"""
+    names = {f.name for f in fields(D.FailureDiagnosis)}
+
+    assert {"category", "blame", "confidence", "root_cause", "evidence",
+            "source", "rule_version", "acceptable_categories"} <= names
+
+
+def test_rule_version_says_which_two_tables_produced_the_verdict():
+    """规则表在 analyzer, blame 投影在这层; 只记一半, 回归就对不上号"""
+    assert D.RULE_VERSION == f"{analyzer.RULES_VERSION}+{D.BLAME_VERSION}"
+
+    diag = D.blame_by_rules(ctx(ASSERT_FAILED))
+
+    assert diag.rule_version == D.RULE_VERSION
+
+
+def test_rule_version_is_recorded_even_when_the_llm_decides():
+    """LLM 结论也要能追到基线规则版本 —— 评测比的正是"它比规则好在哪"""
+    diag = D.diagnose(ctx(ASSERT_FAILED), llm=llm_says(analyzer.CATEGORY_PRODUCT_BUG, 0.95))
+
+    assert diag.source == "llm"
+    assert diag.rule_version == D.RULE_VERSION
+
+
+def test_root_cause_names_what_actually_differs():
+    """卡片要"按钮文案由 X 改为 Y"那一级: 规则根因"断言不匹配"看不出差在哪"""
+    diag = D.blame_by_rules(ctx(ASSERT_FAILED, PageObservation()))
+
+    assert "实际 0 行" in diag.root_cause
+    assert diag.root_cause != "断言不匹配 (功能行为与预期不一致)"
+
+
+def test_root_cause_carries_the_visible_page_text():
+    """一个是现象 (页面提示), 一个是差异 (断言原句), 两样都要"""
+    diag = D.blame_by_rules(
+        ctx(ASSERT_FAILED, PageObservation(messages=1, text="新增失败: 字段校验未通过")))
+
+    assert "新增失败: 字段校验未通过" in diag.root_cause
+    assert "实际 0 行" in diag.root_cause
+
+
+def test_root_cause_admits_when_there_is_no_clue():
+    """真拿不到线索就别写一句看起来确定的根因"""
+    diag = D.blame_by_rules(ctx(""))
+
+    assert "缺少具体线索" in diag.root_cause
+
+
+def test_root_cause_falls_back_to_the_log_when_the_traceback_is_empty():
+    context = FailureContext(log="[runtime] 找不到元素: e9 (css selector=#nope)")
+
+    diag = D.blame_by_rules(context)
+
+    assert "e9 (css selector=#nope)" in diag.root_cause
+
+
+def test_root_cause_on_the_runtime_path_names_the_element():
+    """运行时钩子那份 dict 只有 error 字符串, 根因也要能到元素一级"""
+    diag = D.diagnose(dict(RUNTIME_CONTEXT))
+
+    assert "e9 (css selector=#nope)" in diag.root_cause
+
+
+def test_an_ambiguous_pair_of_script_categories_is_declared():
+    """超时信息里带着定位串时, "等待" 和 "定位器" 两个结论评审都得接受"""
+    traceback = ("selenium.common.exceptions.TimeoutException: Message: timeout: "
+                 "no such element: Unable to locate element: #kw")
+
+    diag = D.blame_by_rules(ctx(traceback))
+
+    assert diag.category == analyzer.CATEGORY_SCRIPT_WAIT
+    assert diag.acceptable_categories == (analyzer.CATEGORY_SCRIPT_HEALER,)
+    assert diag.is_ambiguous
+
+
+def test_a_single_script_signal_is_not_ambiguous():
+    diag = D.blame_by_rules(ctx("NoSuchElementException: Unable to locate element: #kw"))
+
+    assert diag.acceptable_categories == ()
+    assert not diag.is_ambiguous
+
+
+def test_a_leftover_dialog_makes_the_locator_category_acceptable():
+    """弹窗残留既可能是产品没关, 也可能是脚本没清理/被遮挡"""
+    diag = D.blame_by_rules(ctx(ASSERT_FAILED, PageObservation(dialogs=1)))
+
+    assert diag.blame == BLAME_PRODUCT
+    assert diag.acceptable_categories == (analyzer.CATEGORY_SCRIPT_HEALER,)
+
+
+def test_a_clear_product_bug_is_not_ambiguous():
+    diag = D.blame_by_rules(ctx(ASSERT_FAILED, PageObservation()))
+
+    assert diag.acceptable_categories == (), "证据清楚就不要给自己留后路"
+
+
+def test_unknown_is_never_offered_as_an_acceptable_answer():
+    """把 unknown 放进容错, 等于每次猜不出来都算对"""
+    diag = D.blame_by_rules(ctx(""))
+
+    assert diag.blame == BLAME_UNKNOWN
+    assert analyzer.CATEGORY_UNKNOWN not in diag.acceptable_categories
+
+
+def test_the_llm_acceptable_categories_are_normalised_and_bounded():
+    """模型偶尔会把整张表列一遍: 只收能归一到六类的, 去掉自己, 最多两个"""
+    fake = llm_says(analyzer.CATEGORY_SCRIPT_WAIT, 0.9,
+                    acceptable_categories=["需要等", "胡说八道", "脚本-等待问题",
+                                           "环境问题", "脚本-定位器问题"])
+
+    diag = D.diagnose(ctx(ASSERT_FAILED), llm=fake)
+
+    assert diag.acceptable_categories == (analyzer.CATEGORY_ENV,
+                                          analyzer.CATEGORY_SCRIPT_HEALER)
+
+
+def test_the_llm_root_cause_is_used_and_the_old_summary_key_still_works():
+    new = D.diagnose(ctx(ASSERT_FAILED),
+                     llm=llm_says(analyzer.CATEGORY_PRODUCT_BUG, 0.95,
+                                  root_cause="保存按钮文案由 确定 改为 提交"))
+    legacy = D.diagnose(ctx(ASSERT_FAILED),
+                        llm=_Recorder({"category": analyzer.CATEGORY_PRODUCT_BUG,
+                                       "confidence": 0.95, "summary": "旧键根因"}))
+
+    assert new.root_cause == "保存按钮文案由 确定 改为 提交"
+    assert legacy.root_cause == "旧键根因"
+
+
+def test_the_llm_without_a_root_cause_still_gets_a_specific_one():
+    """模型漏了根因字段, 也不能在报告里剩一个空字符串"""
+    diag = D.diagnose(ctx(ASSERT_FAILED),
+                      llm=_Recorder({"category": analyzer.CATEGORY_PRODUCT_BUG,
+                                     "confidence": 0.95}))
+
+    assert "实际 0 行" in diag.root_cause
+
+
+def test_as_dict_carries_the_new_fields_for_reports():
+    diag = D.blame_by_rules(ctx(ASSERT_FAILED, PageObservation(dialogs=1)))
+
+    row = json.loads(json.dumps(diag.as_dict(), ensure_ascii=False))
+
+    assert row["root_cause"] and row["rule_version"] == D.RULE_VERSION
+    assert row["acceptable_categories"] == [analyzer.CATEGORY_SCRIPT_HEALER]
+    assert isinstance(row["evidence"], list), "冻结对象内部用 tuple, 出去必须是 JSON 列表"
+
+
+def test_the_prompt_asks_for_a_specific_root_cause_and_a_bounded_tolerance():
+    for phrase in ("root_cause", "acceptable_categories", "具体到能照着改", "最多 2 个"):
+        assert phrase in D.LLM_SYSTEM
+
+
+def test_the_eval_suite_records_the_version_and_uses_the_tolerance():
+    """6.2 的两个字段不能是死字段: 评测汇报告里要真用上"""
+    from ai_kit.evaluation import eval_analyzer
+
+    blame = eval_analyzer._eval_blame(eval_analyzer._load_cases())
+
+    assert blame["rule_version"] == D.RULE_VERSION
+    assert blame["tolerant_accuracy"] >= blame["accuracy"]
+    assert blame["n_tolerated"] == (sum(row["tolerant"] for row in blame["cases"])
+                                     - sum(row["correct"] for row in blame["cases"]))
+    assert all(row["root_cause"] for row in blame["cases"]), "每行都要有具体根因"
+    assert all(row["rule_version"] == D.RULE_VERSION for row in blame["cases"])

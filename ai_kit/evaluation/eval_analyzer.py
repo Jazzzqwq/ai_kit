@@ -13,9 +13,10 @@ import json
 import os
 from typing import Any, Dict, List, Optional
 
-from ai_kit.analyzer import diagnose
+from ai_kit.analyzer import RULES_VERSION, diagnose
 from ai_kit.evaluation import driver_provider, metrics
 from ai_kit.evaluation import cost_tracker as _ct  # t7 提供; 若无则 --llm 成本记 n/a
+from ai_kit.proposal import diagnoser as _blame
 
 _GOLDEN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden")
 _FIXTURES = os.path.join(_GOLDEN, "fixtures")
@@ -80,12 +81,58 @@ def _eval_mode(cases: List[Dict[str, Any]], use_llm: bool,
     cal = metrics.expected_calibration_error(calib, n_bins=10)
     return {
         "use_llm": use_llm,
+        "rule_version": RULES_VERSION,
         "accuracy": acc,
         "confusion_matrix": metrics.confusion_matrix(pairs),
         "calibration": cal,
         "avg_confidence": round(sum(cf for cf, _ in calib) / len(calib), 3) if calib else 0.0,
         "cost": cost.summary(),
         "cases": case_rows,
+    }
+
+
+# ---------------------------------------------------------------------------
+# blame 层 (6.2): 规则版本 + 容错分类只有在这一层才有, 不跑一次就只是死字段
+# ---------------------------------------------------------------------------
+
+def _eval_blame(cases: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """同一批黄金集再过一遍方案层 (纯规则, 0 成本)
+
+    accuracy 是严格口径; tolerant_accuracy 额外把所有 acceptable_categories 里列出的
+    分类也算对 —— 两个数分开报, 容错不会把主指标抬高。
+    """
+    rows: List[Dict[str, Any]] = []
+    pairs: List[tuple] = []
+    for c in cases:
+        context = _blame.FailureContext(traceback=c.get("traceback", ""),
+                                        log=c.get("log", ""))
+        diag = _blame.diagnose(context, use_llm=False)
+        expected = c["expected_category"]
+        strict = diag.category == expected
+        pairs.append((diag.category, expected))
+        rows.append({
+            "id": c["id"],
+            "expected": expected,
+            "predicted": diag.category,
+            "blame": diag.blame,
+            "root_cause": diag.root_cause,
+            "confidence": round(diag.confidence, 3),
+            "acceptable": list(diag.acceptable_categories),
+            "rule_version": diag.rule_version,
+            "correct": strict,
+            "tolerant": strict or expected in diag.acceptable_categories,
+        })
+
+    blame_counts: Dict[str, int] = {}
+    for row in rows:
+        blame_counts[row["blame"]] = blame_counts.get(row["blame"], 0) + 1
+    return {
+        "rule_version": _blame.RULE_VERSION,
+        "accuracy": metrics.classification_accuracy(pairs),
+        "tolerant_accuracy": metrics.rate([row["tolerant"] for row in rows]),
+        "n_tolerated": sum(1 for row in rows if row["tolerant"] and not row["correct"]),
+        "blame_counts": blame_counts,
+        "cases": rows,
     }
 
 
@@ -100,6 +147,7 @@ def run(use_llm: bool = False, driver=None) -> Dict[str, Any]:
         "status": "OK",
         "n": len(cases),
         "rule": rule,
+        "blame": _eval_blame(cases),
     }
 
     # LLM 模式 (可选对比)
