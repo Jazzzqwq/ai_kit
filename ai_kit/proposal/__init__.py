@@ -8,8 +8,8 @@
                  + blame 三分类 (product / environment / test_code) -> decide()
                  + 两个终态产物 (缺陷单草稿 / 环境检查清单)
     solutions  : 修复方案类型学 (改定位器/加等待/改断言/提缺陷/修环境) + 生成器
-    report     : 人工确认用 HTML 报告 (v1 的人机交互面: 看方案 -> 采纳/拒绝)
-    applier    : 应用方案 -> 回滚 -> 重跑验证 (闭环)
+    report     : 人工确认用单文件 HTML 报告 (失败现场 + 诊断 + 方案, 含 report.json)
+    applier    : 应用方案 -> 重跑验证 -> 回滚, 每个动作记一行 decisions.jsonl
 
 6.1 已落地 diagnoser。用法:
 
@@ -41,4 +41,20 @@ acceptable_categories 列"另一个评审也会点头"的分类 (评测容错)�
 7 类方案: locator_patch / wait_adjust / data_fix / assertion_update / config_change
 / product_bug / env_issue。locator_patch 的 diff 由原文经 difflib 算出 (不是拼的),
 wait_adjust 只给参数不给假 diff, 复杂类型才调 LLM (附失败上下文与 DOM 差异)。
+
+6.4 已落地 report + applier。用法:
+
+    from ai_kit.proposal.report import build, write
+
+    html_path, pending = write(build(context, diagnosis, proposals,
+                                     screenshot=shot, dom_diff=dom_diff),
+                               "artifacts/report.html")   # 同时写出 report.json
+    # 打开 html 看现场与方案, 三条命令直接复制:
+    #   python -m ai_kit.proposal.applier --decision S001 --accept
+    #   python -m ai_kit.proposal.applier --decision S001 --reject --note "..."
+    #   python -m ai_kit.proposal.applier --decision S001 --defer
+
+accept 会真的改文件并跑 verify_cmd, 验证不过自动 git checkout 回滚; 三个动作都往
+decisions.jsonl 追加 {ts, failure_id, proposal_id, decision, verify_result, operator,
+note}。不做 Web 控制台: 报告是一张能发出去的纸, 决策是命令行。
 """

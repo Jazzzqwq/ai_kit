@@ -227,6 +227,8 @@ def test_documented_submodules_import_with_budget_deps_only(tmp_path):
         "ai_kit.proposal",
         "ai_kit.proposal.diagnoser",
         "ai_kit.proposal.solutions",
+        "ai_kit.proposal.report",
+        "ai_kit.proposal.applier",
         "ai_kit.runtime",
         "ai_kit.utils",
     ]
