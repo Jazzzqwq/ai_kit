@@ -25,4 +25,20 @@
 
 6.2 的两个字段是给评测用的: rule_version 记"哪版规则 + 哪版 blame 投影"判的,
 acceptable_categories 列"另一个评审也会点头"的分类 (评测容错)。
+
+6.3 已落地 solutions。用法:
+
+    from ai_kit.proposal.solutions import propose
+
+    proposals = propose(diagnosis, context=context, by="css selector",
+                        locator="body > div.el-dialog", target_file="tests/test_user.py",
+                        test_name="test_open_dialog")   # 规则优先, 拿不到才问 LLM
+    for item in proposals:
+        print(item, item.reason)      # S001 [locator_patch/low] ... (可自动应用)
+        if item.auto_applicable:      # 仅 risk=low + diff 非空 + 改代码的类型
+            ...                       # 6.4 applier 负责 apply / rollback / 重跑
+
+7 类方案: locator_patch / wait_adjust / data_fix / assertion_update / config_change
+/ product_bug / env_issue。locator_patch 的 diff 由原文经 difflib 算出 (不是拼的),
+wait_adjust 只给参数不给假 diff, 复杂类型才调 LLM (附失败上下文与 DOM 差异)。
 """
