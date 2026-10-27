@@ -22,6 +22,7 @@ from selenium.webdriver.remote.webdriver import WebDriver
 from selenium.webdriver.remote.webelement import WebElement
 
 from ai_kit.profiles import default_rules, effective_rules
+from ai_kit.utils import sanitize
 
 
 # ---------------------------------------------------------------------------
@@ -577,7 +578,10 @@ def _l4_llm_candidates(driver: WebDriver,
             els = driver.find_elements(By.CSS_SELECTOR, sel)
             for el in els[:2]:
                 if _is_visible(el):
-                    html = el.get_attribute("outerHTML") or ""
+                    # 出境前脱敏: 容器 outerHTML 里就是用户当时填的值。
+                    # 采集侧 (collector) 的脱敏是页面内 JS 正则, 这里是 Python
+                    # 侧 get_attribute, 用不上那段 JS, 必须自己过一遍 sanitize。
+                    html = sanitize(el.get_attribute("outerHTML") or "")
                     if len(html) > 4000:
                         html = html[:4000] + "...[TRUNCATED]"
                     containers_html.append(f"<!-- {sel} -->\n{html}")

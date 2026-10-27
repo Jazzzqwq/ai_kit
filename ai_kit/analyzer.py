@@ -14,6 +14,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
+from ai_kit.utils import sanitize
+
 
 @dataclass
 class FailureDiagnosis:
@@ -225,6 +227,9 @@ def diagnose_with_llm(traceback_text: str, log_text: str = "", screenshot_base64
     log_trimmed = log_text[-1000:] if len(log_text) > 1000 else log_text
 
     user_msg = f"=== Traceback ===\n{tb_trimmed}\n\n=== Log ===\n{log_trimmed}"
+    # 出境前脱敏: traceback 的 assert 消息里常带着被测页面填的值
+    # ("13812345678" != "13812345670"), log 同理。截图无法文本脱敏, 见 README 数据安全。
+    user_msg = sanitize(user_msg)
     if screenshot_base64:
         print(f"  [分析-多模态] 检测到截图 ({len(screenshot_base64)//1024}KB base64), 调 LLM Vision...")
         result = chat_json_with_image(LLM_SYSTEM_PROMPT, user_msg, screenshot_base64)
