@@ -97,6 +97,21 @@ def test_textarea_content_is_redacted():
     assert "<textarea name='note'>" in out and "</textarea>" in out
 
 
+def test_record_number_in_the_next_element_is_redacted():
+    """只读详情页里字段名和值分居两个元素: 值必须照样抹掉 (实测漏过)"""
+    out = sanitize('<span class="label">住院号：</span><span class="value">ZY2024090007</span>')
+
+    assert "ZY2024090007" not in out
+    assert "住院号" in out
+
+
+def test_name_in_the_next_element_is_redacted():
+    out = sanitize('<label>就诊人</label><div class="content"><span>赵六</span></div>')
+
+    assert "赵六" not in out
+    assert "就诊人" in out
+
+
 def test_element_with_pii_hint_class_is_redacted():
     assert "李四" not in sanitize('<span class="patient-name">李四</span>')
     assert "李四" not in sanitize('<td data-field="realName">李四</td>')

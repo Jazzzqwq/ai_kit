@@ -57,8 +57,9 @@ _PII_ELEMENT = re.compile(
     re.I)
 
 # 字段名 + 值: 姓名 / 病历号这类本身没有自证形状的字段, 只能靠 key 兜
-_NAME_KEYS = (r"患者姓名|联系人姓名|家属姓名|监护人|主治医师|主管医师|医师|医生|护士|"
-              r"操作人|经办人|姓\s*名")
+# "患者" / "就诊人" 单拎出来是因为只读详情页常写 "就诊人 | 赵六"
+_NAME_KEYS = (r"患者姓名|联系人姓名|家属姓名|就诊人|患者|病人|联系人|监护人|"
+              r"主治医师|主管医师|医师|医生|护士|操作人|经办人|姓\s*名")
 _NAME_VALUE = re.compile(rf'({_NAME_KEYS})(\s*[:：=]\s*|\s+)([\u4e00-\u9fa5·]{{2,6}})')
 
 # <label>姓名</label><div class="x">张三</div> — 值在别的标签里
@@ -70,6 +71,11 @@ _RECORD_KEYS = (r"病历号|病案号|住院号|门诊号|就诊号|就诊卡号
                 r"检查号|检验号|报告单号")
 _RECORD_VALUE = re.compile(
     rf'({_RECORD_KEYS})(\s*[:：=]?\s*)([A-Za-z0-9][A-Za-z0-9\-]{{3,31}})')
+
+# <span>住院号：</span><span>ZY2024090007</span> — 只读详情页里值在下一个标签
+_RECORD_LABEL = re.compile(
+    rf'({_RECORD_KEYS})\s*[:：]?\s*</(?:label|span|div|td|th|p)>\s*'
+    r'(?:<[a-zA-Z][^>]*>\s*){0,3}([A-Za-z0-9][A-Za-z0-9\-]{3,31})')
 
 # 身份证 18 位 (末位可为 X) 与老式 15 位; 先 18 后 15, 免得长号被短号切碎
 _ID_CARD = re.compile(r'(?<![\dA-Za-z])\d{17}[\dXx](?![\dA-Za-z])')
@@ -160,6 +166,7 @@ def sanitize(text: str) -> str:
     out = _NAME_VALUE.sub(_redact_keyed, out)
     out = _NAME_LABEL.sub(_redact_labeled, out)
     out = _RECORD_VALUE.sub(_redact_keyed, out)
+    out = _RECORD_LABEL.sub(_redact_labeled, out)
     out = _PII_ELEMENT.sub(_redact_text, out)
     out = _ID_CARD.sub(REDACTED, out)
     out = _ID_CARD_15.sub(REDACTED, out)
