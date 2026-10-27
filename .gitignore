@@ -23,8 +23,9 @@ allure-reports/
 ai_kit/profiles/sites/*.json
 !ai_kit/profiles/sites/example_*.json
 
-# runtime outputs
+# runtime outputs (本地跑评测不打脏工作区; CI 周更用 `git add -f` 把报告入库)
 ai_evaluation_report.*
+ai_evaluation_smoke.*
 locator_heal_cache.json
 
 # 5.9 缓存与账本 (运行时产物: 命中缓存后换台机器没有意义, 账本只对本机有意义)

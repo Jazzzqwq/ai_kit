@@ -10,24 +10,21 @@
 """
 from __future__ import annotations
 
-import json
-import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from ai_kit.generator import core as gcore
-from ai_kit.evaluation import metrics, cost_tracker as _ct
+from ai_kit.evaluation import golden, metrics, cost_tracker as _ct
 
 try:
     from ai_kit.generator.prompts import TEST_USER_PREFIXES
 except Exception:  # noqa: BLE001
     TEST_USER_PREFIXES = ["gen_"]
 
-_GOLDEN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden")
+_GOLDEN = golden.DEFAULT_DIR
 
 
 def _load_cases() -> List[Dict[str, Any]]:
-    with open(os.path.join(_GOLDEN, "generator_cases.json"), encoding="utf-8") as f:
-        return json.load(f)["cases"]
+    return golden.load("generator", directory=_GOLDEN)
 
 
 def _plan_to_text(plan: Dict[str, Any]) -> str:
@@ -45,12 +42,14 @@ def _plan_to_text(plan: Dict[str, Any]) -> str:
 
 
 def _one_case(c: Dict[str, Any], use_llm: bool, cost: "_ct.CostTracker") -> Dict[str, Any]:
-    page_name = c.get("page_name", "")
-    po_module = c.get("po_module", "module")
-    po_class = c.get("po_class", "Page")
-    fixture_name = c.get("fixture_name", "page")
-    po_methods = c.get("po_methods", "")
-    page_structure = c.get("page_structure", {})
+    sample = c.get("input") or {}
+    expected = c.get("expected") or {}
+    page_name = sample.get("page_name", "")
+    po_module = sample.get("po_module", "module")
+    po_class = sample.get("po_class", "Page")
+    fixture_name = sample.get("fixture_name", "page")
+    po_methods = sample.get("po_methods", "")
+    page_structure = sample.get("page_structure", {})
 
     llm_ok = True
     if use_llm:
@@ -78,8 +77,8 @@ def _one_case(c: Dict[str, Any], use_llm: bool, cost: "_ct.CostTracker") -> Dict
     gen_text = _plan_to_text(plan)
     cov = metrics.coverage_recall(
         gen_text,
-        expected_keywords=c.get("expected_keywords", []),
-        expected_categories=c.get("expected_categories", []),
+        expected_keywords=expected.get("keywords", []),
+        expected_categories=expected.get("categories", []),
     )
     dup = metrics.duplication_rate(code)
 
@@ -95,8 +94,11 @@ def _one_case(c: Dict[str, Any], use_llm: bool, cost: "_ct.CostTracker") -> Dict
     }
 
 
-def run(use_llm: bool = False) -> Dict[str, Any]:
+def run(use_llm: bool = False, limit: Optional[int] = None) -> Dict[str, Any]:
+    """limit: 只跑前 N 条 (--smoke 冒烟用)"""
     cases = _load_cases()
+    if limit is not None and limit > 0:
+        cases = cases[:limit]
     cost = _ct.CostTracker()
     rows: List[Dict[str, Any]] = []
 
@@ -119,17 +121,19 @@ def run(use_llm: bool = False) -> Dict[str, Any]:
     def _mean(xs):
         return round(sum(xs) / len(xs), 4) if xs else 0.0
 
+    # 一条 case 对应一个页面 → 每页成本才有意义 (每次成本随 prompt 长短飘)
     return {
         "suite": "generator",
         "status": "OK",
         "mode": "llm" if use_llm else "skeleton",
         "skeleton_mode": not use_llm,   # True 时不代表真实生成质量
         "n": len(cases),
+        "n_pages": len(cases),
         "py_compile_pass_rate": metrics.rate(compiles),
         "avg_coverage_recall": _mean(covs),
         "avg_name_collision_rate": _mean(collisions),
         "avg_step_near_dup_rate": _mean(near_dup),
-        "cost": cost.summary(),
+        "cost": cost.summary(units=len(cases)),
         "cases": rows,
     }
 

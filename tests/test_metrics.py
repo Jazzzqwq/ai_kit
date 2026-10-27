@@ -36,6 +36,38 @@ def test_ece():
     assert r["n"] == 3
 
 
+def test_ece_bin_count_is_configurable():
+    """7.1 口径是 5 箱; 分箱数变了可靠性表长度跟着变"""
+    r = m.expected_calibration_error([(0.9, True), (0.1, False)], n_bins=5)
+    assert len(r["reliability"]) == 5
+    assert r["reliability"][4]["count"] == 1 and r["reliability"][0]["count"] == 1
+
+
+def test_confidence_gap():
+    # 平均置信 .9, 准确率 .5 -> 说得好听做得不行
+    over = m.confidence_gap([(0.9, True), (0.9, False)])
+    assert over["verdict"] == "过度自信" and _close(over["gap"], 0.4)
+    # 平均置信 .5, 准确率 1.0 -> 比实际表现保守
+    under = m.confidence_gap([(0.5, True), (0.5, True)])
+    assert under["verdict"] == "欠自信" and _close(under["gap"], -0.5)
+    # 平均置信 .8, 准确率 4/5=.8 -> 贴着对角线
+    good = m.confidence_gap([(0.8, True)] * 4 + [(0.8, False)])
+    assert good["verdict"] == "校准良好" and _close(good["gap"], 0.0)
+    assert m.confidence_gap([])["verdict"] == "无样本"
+
+
+def test_layer_breakdown():
+    baseline = {"L1": 0.3, "L2": 0.5, "L3": 0.1, "L4": 0.1}
+    r = m.layer_breakdown(["L1", "L2", "L2", None], baseline=baseline)
+    assert r["per_layer"]["L2"]["count"] == 2
+    assert _close(r["per_layer"]["L2"]["share"], 0.5)
+    assert _close(r["per_layer"]["L2"]["delta"], 0.0), "正好撞上 README 估算"
+    assert _close(r["per_layer"]["L1"]["delta"], -0.05)
+    assert r["no_hit"] == 1 and _close(r["no_hit_share"], 0.25)
+    assert "baseline" not in m.layer_breakdown(["L1"])["per_layer"]["L1"], \
+        "不给基线就不编差值"
+
+
 def test_py_compile():
     ok, _ = m.py_compile_pass("def f():\n    return 1\n")
     assert ok is True

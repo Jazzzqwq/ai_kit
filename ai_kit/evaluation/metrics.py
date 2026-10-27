@@ -4,7 +4,9 @@
 
 对外提供:
 - top_k_hit / rate                  : top-1 / top-3 命中率
+- layer_breakdown                   : 分层贡献 (L1-L4, 可对照文档估算占比)
 - accuracy + confusion_matrix       : 分类准确率 + 混淆矩阵
+- confidence_gap                    : 过度/欠自信 (mean(conf) - accuracy, 标题指标)
 - expected_calibration_error (ECE)  : 置信度校准 (分箱可靠性)
 - py_compile_pass                   : 生成代码语法编译通过率
 - coverage_recall                   : 生成用例对"应覆盖场景"的召回率
@@ -14,7 +16,7 @@ from __future__ import annotations
 
 import ast
 import re
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 
 # ---------------------------------------------------------------------------
@@ -58,6 +60,36 @@ def top_k_rates(case_candidate_hits: Iterable[Sequence[bool]],
         flags = [top_k_hit(h, k) for h in cases]
         out[k] = rate(flags)
     return out
+
+
+def layer_breakdown(winners: Sequence[Optional[str]],
+                    baseline: Optional[Mapping[str, float]] = None,
+                    layers: Sequence[str] = ("L1", "L2", "L3", "L4")) -> Dict[str, Any]:
+    """
+    分层贡献: 每条 case 的首个命中候选来自哪一层 (None = 所有候选都没命中)。
+
+    baseline 给的是文档里的估算占比 (README 30/50/10/10), 给了就顺带算差值 ——
+    实测与估算摆在一起, 才看得出哪一层被高估了。L4 只有注入 LLM 才会出现, 离线
+    模式下它恒为 0, 那是口径问题不是策略退化, 由调用方在报告里注明。
+    """
+    n = len(winners)
+    per_layer: Dict[str, Dict[str, Any]] = {}
+    for layer in layers:
+        count = sum(1 for w in winners if w == layer)
+        share = safe_div(count, n)
+        row: Dict[str, Any] = {"count": count, "share": round(share, 4)}
+        if baseline is not None and layer in baseline:
+            row["baseline"] = baseline[layer]
+            row["delta"] = round(share - baseline[layer], 4)
+        per_layer[layer] = row
+
+    no_hit = sum(1 for w in winners if w is None)
+    return {
+        "n": n,
+        "per_layer": per_layer,
+        "no_hit": no_hit,
+        "no_hit_share": round(safe_div(no_hit, n), 4),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +161,40 @@ def expected_calibration_error(samples: Sequence[Tuple[float, bool]],
         })
 
     return {"ece": round(ece, 4), "n": n, "reliability": reliability}
+
+
+def confidence_gap(samples: Sequence[Tuple[float, bool]],
+                   band: float = 0.02) -> Dict[str, Any]:
+    """
+    过度自信 / 欠自信 —— 标题指标: mean(confidence) − accuracy
+
+    正数 = 过度自信 (说得比做得好); 负数 = 欠自信 (比实际表现保守);
+    |gap| <= band 算校准良好。
+
+    与 ECE 的分工: ECE 逐箱看 "每个置信区间贴着对角线吗", 一个数讲不清原因;
+    gap 只看整体偏差, 一个数就能读。所以标题用 gap, 分箱表留给 ECE 做细节。
+    """
+    n = len(samples)
+    if n == 0:
+        return {"gap": 0.0, "mean_confidence": 0.0, "accuracy": 0.0,
+                "n": 0, "verdict": "无样本", "band": band}
+    mean_conf = sum(float(c) for c, _ in samples) / n
+    accuracy = rate([bool(ok) for _, ok in samples])
+    gap = mean_conf - accuracy
+    if gap > band:
+        verdict = "过度自信"
+    elif gap < -band:
+        verdict = "欠自信"
+    else:
+        verdict = "校准良好"
+    return {
+        "gap": round(gap, 4),
+        "mean_confidence": round(mean_conf, 4),
+        "accuracy": round(accuracy, 4),
+        "n": n,
+        "verdict": verdict,
+        "band": band,
+    }
 
 
 # ---------------------------------------------------------------------------

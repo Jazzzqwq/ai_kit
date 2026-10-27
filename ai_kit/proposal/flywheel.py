@@ -13,9 +13,9 @@ join: decisions.jsonl × report.json (report.write 的产物), 按 failure_id �
     verified (accept + 重跑通过)      -> flywheel_positive.json    正样本
     rejected (人拒 / 采纳但验证不过)  -> flywheel_negative.json    负样本 (含理由)
 
-正样本喂给 evaluation/eval_analyzer: 它只读 traceback / log / expected_category,
-本模块写出的 case 与手写的 analyzer_cases.json 同形, 所以评测集随使用自然增长
-(run_eval --no-flywheel 可退回手写基线做对比)。
+正样本喂给 evaluation/eval_analyzer: 它读 input.traceback / input.log / expected.category,
+本模块写出的 case 就是 7.2 的黄金集 schema, 与手写的 analyzer_cases.json 同形,
+所以评测集随使用自然增长 (run_eval --no-flywheel 可退回手写基线做对比)。
 
 负样本不进任何套件的分母 —— 这条区分是有原则的: reject 只说"这个方案不对", 不说明
 "归因错了"。把一条定位器补丁被拒的样本塞进分类准确率, 等于把正确的归因算成错。
@@ -68,14 +68,15 @@ _SKIP_DIRS = frozenset({
 _COMMENTS = {
     "positive": (
         "数据飞轮正样本 (6.6): decisions.jsonl 里 accept 且重跑验证通过的记录, "
-        "join report.json 得到失败现场。eval_analyzer 默认并入黄金集 (--no-flywheel "
-        "退回手写基线)。expected_category 取自报告里的 diagnosis, 是机器给的, "
-        "category_source 记着出处 —— 当归因黄金用之前应先人工复核。"
-        "由 python -m ai_kit.proposal.flywheel 生成: 只追加, 不改既有条目。"),
+        "join report.json 得到失败现场, 写成 7.2 黄金集 schema (source=flywheel, "
+        "module=analyzer)。eval_analyzer 默认并入黄金集 (--no-flywheel 退回手写基线)。"
+        "expected.category 取自报告里的 diagnosis, 是机器给的, category_source 记着出处 ",
+        "—— 当归因黄金用之前应先人工复核。由 python -m ai_kit.proposal.flywheel "
+        "生成: 只追加, 不改既有条目。"),
     "negative": (
         "数据飞轮负样本 (6.6): 人拒掉的方案, 以及采纳了但验证没过的补丁, 都带 "
-        "rejected_reason。不进任何评测套件的分母 —— reject 只说这个方案不对, "
-        "不说明归因错了。用途是复盘与将来做方案层评测的反面清单。"),
+        "rejected_reason。module=proposal —— 不进任何评测套件的分母: reject 只说这个"
+        "方案不对, 不说明归因错了。用途是复盘与将来做方案层评测的反面清单。"),
 }
 
 
@@ -120,8 +121,13 @@ def _skip(row: Mapping[str, Any], reason: str) -> Dict[str, str]:
 
 
 def _base_case(row: Mapping[str, Any], payload: Mapping[str, Any],
-               proposal: Mapping[str, Any]) -> Dict[str, Any]:
-    """正负样本共有的字段: 现场 + 归因 + 方案 + 谁在什么时候决定的"""
+               proposal: Mapping[str, Any], *, module: str) -> Dict[str, Any]:
+    """正负样本共有的字段: 现场 + 归因 + 方案 + 谁在什么时候决定的
+
+    写成 7.2 的黄金集 schema ({id, module, rule_version, source, input, expected, note}),
+    溯源字段 (failure_id / category_source …) 额外平铺 —— schema 没说不能多, 而少了
+    它们就回不到那条决策。
+    """
     failure_id = str(row.get("failure_id") or "").strip()
     proposal_id = str(row.get("proposal_id") or "").strip()
     diagnosis = payload.get("diagnosis")
@@ -130,15 +136,16 @@ def _base_case(row: Mapping[str, Any], payload: Mapping[str, Any],
     log, log_cut = _clip(payload.get("log"), MAX_TEXT_CHARS)
     case: Dict[str, Any] = {
         "id": _case_id(failure_id, proposal_id),
-        "origin": "flywheel",
-        "traceback": trace,
-        "log": log,
-        "expected_category": str(diagnosis.get("category") or ""),
+        "module": module,
+        "rule_version": str(diagnosis.get("rule_version") or "unknown"),
+        "source": "flywheel",
+        "input": {"traceback": trace, "log": log},
+        "expected": {"category": str(diagnosis.get("category") or ""),
+                     "acceptable_categories": []},
+        "note": str(row.get("note") or ""),
         # 标签来源: 分类是规则/LLM 给的, 人只确认了动作 (采纳且补丁通过)
         "category_source": f"diagnosis@{diagnosis.get('rule_version') or 'unknown'}",
         "blame": str(diagnosis.get("blame") or ""),
-        "expected_type": str(proposal.get("type") or ""),
-        "expected_target_file": str(proposal.get("target_file") or ""),
         "verify_cmd": str(proposal.get("verify_cmd") or ""),
         "failure_id": failure_id,
         "proposal_id": proposal_id,
@@ -154,12 +161,14 @@ def _base_case(row: Mapping[str, Any], payload: Mapping[str, Any],
 def _positive(row: Mapping[str, Any], payload: Mapping[str, Any],
               proposal: Mapping[str, Any]) -> Dict[str, Any]:
     """正样本: 人采纳 + 验证通过 -> 期望输出 (分类 / 方案类型 / 目标文件 / 补丁)"""
-    case = _base_case(row, payload, proposal)
+    case = _base_case(row, payload, proposal, module="analyzer")
     case["label"] = "positive"
     diff, diff_cut = _clip(proposal.get("diff"), MAX_DIFF_CHARS)
-    case["expected_diff"] = diff
-    case["expected_risk"] = str(proposal.get("risk") or "")
-    case["note"] = str(row.get("note") or "")
+    expected = case["expected"]
+    expected["type"] = str(proposal.get("type") or "")
+    expected["target_file"] = str(proposal.get("target_file") or "")
+    expected["diff"] = diff
+    expected["risk"] = str(proposal.get("risk") or "")
     if diff_cut:
         case["truncated"] = True
     return case
@@ -168,11 +177,13 @@ def _positive(row: Mapping[str, Any], payload: Mapping[str, Any],
 def _negative(row: Mapping[str, Any], payload: Mapping[str, Any],
               proposal: Mapping[str, Any]) -> Dict[str, Any]:
     """负样本: 只要"为什么不行" —— 人的拒绝理由, 或验证失败的输出尾巴"""
-    case = _base_case(row, payload, proposal)
+    case = _base_case(row, payload, proposal, module="proposal")
     case["label"] = "negative"
     reason, _ = _clip(row.get("note"), MAX_NOTE_CHARS)
     case["rejected_reason"] = reason
-    case["rejected_diff"] = str(proposal.get("diff") or "")
+    case["expected"]["type"] = str(proposal.get("type") or "")
+    case["expected"]["target_file"] = str(proposal.get("target_file") or "")
+    case["expected"]["diff"] = str(proposal.get("diff") or "")
     return case
 
 

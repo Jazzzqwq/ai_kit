@@ -11,7 +11,7 @@
     before = cost.snapshot_hook()   # 记录一次评测 case 前的累计
     ... 触发 diagnose/generate (内部会调 chat) ...
     cost.record_since(before)       # 累加本 case 的 token 增量
-    cost.summary()                  # {calls, tokens, per_call(元/"n/a")}
+    cost.summary()                  # {calls, tokens, per_call(元/"n/a"), per_page}
 """
 from __future__ import annotations
 
@@ -60,7 +60,11 @@ class CostTracker:
         if self.price_known:
             self.cost_yuan += dp / 1000.0 * self.price_in + dc / 1000.0 * self.price_out
 
-    def summary(self) -> Dict[str, Any]:
+    def summary(self, units: int = 0) -> Dict[str, Any]:
+        """
+        units: 本次评测实际“页数”（一个页面 = 一组 case 所对应的同一页面）。
+        给了就算每页成本 —— “每次成本”随 prompt 长短飘，“每页成本”才是能拿去报价的数。
+        """
         per_call: Any
         if not self.price_known:
             per_call = "n/a"      # 没配价目表 → 无法换算成本
@@ -68,11 +72,19 @@ class CostTracker:
             per_call = 0.0        # 本次评测没真正调 LLM (如规则模式/LLM降级)
         else:
             per_call = round(self.cost_yuan / self.calls, 6)
+
+        per_unit: Any = "n/a"
+        if units > 0:
+            per_unit = (round(self.cost_yuan / units, 6) if self.price_known else "n/a")
+
         return {
             "llm_calls": self.calls,
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens,
             "total_cost_yuan": (round(self.cost_yuan, 6) if self.price_known else "n/a"),
             "per_call": per_call,
-            "price_per_1k": {"input": self.price_in, "output": self.price_out} if self.price_known else "n/a",
+            "pages": units,
+            "per_page": per_unit,
+            "price_per_1k": ({"input": self.price_in, "output": self.price_out}
+                             if self.price_known else "n/a"),
         }

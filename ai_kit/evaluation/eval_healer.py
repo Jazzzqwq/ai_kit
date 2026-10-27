@@ -11,24 +11,26 @@
 """
 from __future__ import annotations
 
-import json
 import os
 from typing import Any, Dict, List, Optional
 
 from selenium.webdriver.common.by import By
 
 from ai_kit.healer import rank_candidates
-from ai_kit.evaluation import driver_provider, metrics
+from ai_kit.evaluation import driver_provider, golden, metrics
 
 _BY_MAP = {"css": By.CSS_SELECTOR, "xpath": By.XPATH}
 
-_GOLDEN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden")
+_GOLDEN = golden.DEFAULT_DIR
 _FIXTURES = os.path.join(_GOLDEN, "fixtures")
+
+# README 里的估算分布 L1 30% / L2 50% / L3 10% / L4 10% —— 实测拿来对照,
+# 不是拿来凑数的: 差多少就写多少。L4 只有注入 LLM 才会产生候选, 离线跑恒为 0。
+_README_SHARE = {"L1": 0.30, "L2": 0.50, "L3": 0.10, "L4": 0.10}
 
 
 def _load_cases() -> List[Dict[str, Any]]:
-    with open(os.path.join(_GOLDEN, "healer_cases.json"), encoding="utf-8") as f:
-        return json.load(f)["cases"]
+    return golden.load("healer", directory=_GOLDEN)
 
 
 def _element_target(driver, by_const: str, locator: str) -> Optional[str]:
@@ -71,45 +73,50 @@ def run(use_llm: bool = False, driver=None) -> Dict[str, Any]:
 
     case_reports: List[Dict[str, Any]] = []
     candidate_hits_series: List[List[bool]] = []
-    layer_hits = {"L1": 0, "L2": 0, "L3": 0, "L4": 0}
-    winner_layer_none = 0
+    winners: List[Optional[str]] = []
+    per_layer_hit = {"L1": 0, "L2": 0, "L3": 0, "L4": 0}
     llm_client = _llm_client(use_llm)
 
     try:
         for c in cases:
-            fixture_path = os.path.join(_FIXTURES, c["fixture"])
+            sample = c.get("input") or {}
+            expected = c.get("expected") or {}
+            fixture_path = os.path.join(_FIXTURES, sample["fixture"])
             driver.get(driver_provider.to_file_url(fixture_path))
 
-            broken_by = _BY_MAP.get(c["broken_by"], By.CSS_SELECTOR)
+            broken_by = _BY_MAP.get(sample.get("broken_by"), By.CSS_SELECTOR)
             cands = rank_candidates(
-                driver, broken_by, c["broken_locator"],
-                intent=c.get("intent", ""), llm_client=llm_client,
+                driver, broken_by, sample["broken_locator"],
+                intent=sample.get("intent", ""), llm_client=llm_client,
             )
 
-            expected_target = c["expected_target"]
+            expected_target = expected["target"]
             hits: List[bool] = []
             winner_rank = None
             winner_layer = None
+            layers_hit = set()
             for idx, cand in enumerate(cands):
                 t = _element_target(driver, cand.by, cand.locator)
                 hit = (t is not None and t == expected_target)
                 hits.append(hit)
+                if hit:
+                    layers_hit.add(cand.layer)
                 if hit and winner_rank is None:
                     winner_rank = idx
                     winner_layer = cand.layer
 
             candidate_hits_series.append(hits)
-            if winner_layer:
-                layer_hits[winner_layer] += 1
-            else:
-                winner_layer_none += 1
+            winners.append(winner_layer)
+            for layer in layers_hit:
+                per_layer_hit[layer] = per_layer_hit.get(layer, 0) + 1
 
             case_reports.append({
                 "id": c["id"],
                 "n_candidates": len(cands),
                 "winner_rank": winner_rank,          # None = 全部候选都没命中
                 "winner_layer": winner_layer,
-                "layer_hint": c.get("layer_hint"),
+                "layers_hit": sorted(layers_hit),
+                "layer_hint": expected.get("layer_hint"),
                 "top1_hit": metrics.top_k_hit(hits, 1),
                 "top3_hit": metrics.top_k_hit(hits, 3),
                 "candidates": [(cand.by, cand.locator, round(cand.confidence, 2), cand.layer)
@@ -120,6 +127,7 @@ def run(use_llm: bool = False, driver=None) -> Dict[str, Any]:
             driver_provider.quit_driver(own_driver)
 
     tk = metrics.top_k_rates(candidate_hits_series, ks=(1, 3))
+    layers = metrics.layer_breakdown(winners, baseline=_README_SHARE)
     n = len(cases)
     return {
         "suite": "healer",
@@ -128,8 +136,11 @@ def run(use_llm: bool = False, driver=None) -> Dict[str, Any]:
         "use_llm": use_llm,
         "top1": tk.get(1, 0.0),
         "top3": tk.get(3, 0.0),
-        "per_layer_winner": layer_hits,
-        "no_hit_cases": winner_layer_none,
+        "per_layer_winner": {layer: row["count"] for layer, row in layers["per_layer"].items()},
+        "per_layer_hit": per_layer_hit,
+        "layers": layers,
+        "readme_share": dict(_README_SHARE),
+        "no_hit_cases": layers["no_hit"],
         "cases": case_reports,
     }
 

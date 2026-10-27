@@ -137,12 +137,13 @@ def test_a_verified_decision_becomes_a_positive_sample(scene):
     assert result["positive_added"] == 1 and result["negative_added"] == 0
     case = golden_cases(golden, F.POSITIVE_NAME)[0]
     assert case["id"] == "FLY-LC-002-S001"
-    assert case["label"] == "positive" and case["origin"] == "flywheel"
-    assert case["traceback"] == TRACE and case["log"] == LOG
-    assert case["expected_category"] == "脚本-定位器问题"
-    assert case["expected_type"] == "locator_patch"
-    assert case["expected_target_file"] == "tests/test_user.py"
-    assert case["expected_diff"] == DIFF, "正样本要带上那个被验证通过的补丁"
+    assert case["label"] == "positive" and case["source"] == "flywheel"
+    assert case["module"] == "analyzer", "正样本喂给归因套件"
+    assert case["input"]["traceback"] == TRACE and case["input"]["log"] == LOG
+    assert case["expected"]["category"] == "脚本-定位器问题"
+    assert case["expected"]["type"] == "locator_patch"
+    assert case["expected"]["target_file"] == "tests/test_user.py"
+    assert case["expected"]["diff"] == DIFF, "正样本要带上那个被验证通过的补丁"
     assert case["decided_by"] == "syn"
     assert case["decided_at"] == "2026-10-20T10:05:00Z"
 
@@ -176,8 +177,9 @@ def test_a_reject_becomes_a_negative_sample_with_the_reason(tmp_path):
 
     case = golden_cases(tmp_path / "golden", F.NEGATIVE_NAME)[0]
     assert case["label"] == "negative"
+    assert case["module"] == "proposal", "负面清单属于方案层, 不进归因分母"
     assert case["rejected_reason"] == "文案变更应同步产品", "负样本的全部价值就在这句理由"
-    assert case["rejected_diff"] == DIFF
+    assert case["expected"]["diff"] == DIFF
 
 
 def test_an_accepted_but_failed_patch_is_also_negative(tmp_path):
@@ -333,9 +335,9 @@ def test_a_long_traceback_is_clipped_but_keeps_the_ending(tmp_path):
     F.export(ledger, tmp_path / "reports", golden=tmp_path / "golden")
 
     case = golden_cases(tmp_path / "golden", F.POSITIVE_NAME)[0]
-    assert len(case["traceback"]) < F.MAX_TEXT_CHARS + 100
-    assert case["traceback"].startswith("Traceback")
-    assert case["traceback"].endswith("ValueError: 真正的原因")
+    assert len(case["input"]["traceback"]) < F.MAX_TEXT_CHARS + 100
+    assert case["input"]["traceback"].startswith("Traceback")
+    assert case["input"]["traceback"].endswith("ValueError: 真正的原因")
     assert case["truncated"] is True
 
 
@@ -348,7 +350,7 @@ def test_the_newest_report_wins_when_a_failure_has_two(tmp_path):
 
     F.export(ledger, tmp_path / "reports", golden=tmp_path / "golden")
 
-    assert golden_cases(tmp_path / "golden", F.POSITIVE_NAME)[0]["traceback"] == "新现场"
+    assert golden_cases(tmp_path / "golden", F.POSITIVE_NAME)[0]["input"]["traceback"] == "新现场"
 
 
 def test_reports_are_found_recursively_and_venv_is_skipped(tmp_path):

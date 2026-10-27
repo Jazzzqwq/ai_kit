@@ -1,245 +1,437 @@
 {
-  "_comment": "自愈黄金集: 坏定位器 -> 正确定位器对, 相对自带静态 HTML 夹具定义, 可移植/可复现。by 取值: css/xpath。expected_target 为夹具里目标元素的 data-eval-target 值, 评测据此判定候选是否命中同一元素。layer_hint 仅为期望, 实际归因由首个命中候选所属层计算。覆盖: L1 精确规则映射 / L2 语义(消息框·对话框·表格·下拉) / L2 意图(确定·取消·关闭) / L3 纯相对XPath。",
+  "_comment": "自愈黄金集 (7.2 schema): input = 夹具 + 坏定位器 + 元素用途, expected = 正确定位器 + 目标元素 (夹具里打 data-eval-target), layer_hint 是期望由哪层救回。规模底线 >= 20 条。",
   "cases": [
     {
       "id": "H1_message_box_root",
-      "fixture": "el_message_box.html",
-      "broken_by": "css",
-      "broken_locator": "body > div.el-message-box",
-      "intent": "弹窗根容器",
-      "expected_locator": ".el-message-box",
-      "expected_target": "mb_root",
-      "layer_hint": "L1"
+      "module": "healer",
+      "rule_version": "healer.v1",
+      "source": "manual",
+      "input": {
+        "fixture": "el_message_box.html",
+        "broken_by": "css",
+        "broken_locator": "body > div.el-message-box",
+        "intent": "弹窗根容器"
+      },
+      "expected": {
+        "locator": ".el-message-box",
+        "target": "mb_root",
+        "layer_hint": "L1"
+      },
+      "note": ""
     },
     {
       "id": "H2_dialog_root",
-      "fixture": "el_dialog.html",
-      "broken_by": "css",
-      "broken_locator": "body > div.el-dialog",
-      "intent": "对话框根",
-      "expected_locator": ".el-dialog",
-      "expected_target": "dlg_root",
-      "layer_hint": "L1"
+      "module": "healer",
+      "rule_version": "healer.v1",
+      "source": "manual",
+      "input": {
+        "fixture": "el_dialog.html",
+        "broken_by": "css",
+        "broken_locator": "body > div.el-dialog",
+        "intent": "对话框根"
+      },
+      "expected": {
+        "locator": ".el-dialog",
+        "target": "dlg_root",
+        "layer_hint": "L1"
+      },
+      "note": ""
     },
     {
       "id": "H3_delete_confirm_btn",
-      "fixture": "el_message_box.html",
-      "broken_by": "css",
-      "broken_locator": ".el-message-box__btns button.el-button--primary",
-      "intent": "删除 确定",
-      "expected_locator": ".el-message-box__btns button.el-button--danger, .el-message-box__btns button.el-button--primary",
-      "expected_target": "del_btn",
-      "layer_hint": "L1"
+      "module": "healer",
+      "rule_version": "healer.v1",
+      "source": "manual",
+      "input": {
+        "fixture": "el_message_box.html",
+        "broken_by": "css",
+        "broken_locator": ".el-message-box__btns button.el-button--primary",
+        "intent": "删除 确定"
+      },
+      "expected": {
+        "locator": ".el-message-box__btns button.el-button--danger, .el-message-box__btns button.el-button--primary",
+        "target": "del_btn",
+        "layer_hint": "L1"
+      },
+      "note": ""
     },
     {
       "id": "H4_table_body",
-      "fixture": "el_table.html",
-      "broken_by": "css",
-      "broken_locator": ".el-table__rows",
-      "intent": "表格数据体",
-      "expected_locator": ".el-table__body-wrapper .el-table__body",
-      "expected_target": "tbody",
-      "layer_hint": "L2"
+      "module": "healer",
+      "rule_version": "healer.v1",
+      "source": "manual",
+      "input": {
+        "fixture": "el_table.html",
+        "broken_by": "css",
+        "broken_locator": ".el-table__rows",
+        "intent": "表格数据体"
+      },
+      "expected": {
+        "locator": ".el-table__body-wrapper .el-table__body",
+        "target": "tbody",
+        "layer_hint": "L2"
+      },
+      "note": ""
     },
     {
       "id": "H5_select_wrapper",
-      "fixture": "el_select.html",
-      "broken_by": "css",
-      "broken_locator": ".el-select__input-old",
-      "intent": "下拉触发器",
-      "expected_locator": ".el-select__wrapper",
-      "expected_target": "sel_wrapper",
-      "layer_hint": "L2"
+      "module": "healer",
+      "rule_version": "healer.v1",
+      "source": "manual",
+      "input": {
+        "fixture": "el_select.html",
+        "broken_by": "css",
+        "broken_locator": ".el-select__input-old",
+        "intent": "下拉触发器"
+      },
+      "expected": {
+        "locator": ".el-select__wrapper",
+        "target": "sel_wrapper",
+        "layer_hint": "L2"
+      },
+      "note": ""
     },
     {
       "id": "H6_confirm_via_relative_xpath",
-      "fixture": "el_message_box.html",
-      "broken_by": "css",
-      "broken_locator": "span.submit-confirmation",
-      "intent": "提交",
-      "expected_locator": "//*[contains(@class,'el-message-box')]//*[contains(@class,'btns')]/button[last()]",
-      "expected_target": "del_btn",
-      "layer_hint": "L3"
+      "module": "healer",
+      "rule_version": "healer.v1",
+      "source": "manual",
+      "input": {
+        "fixture": "el_message_box.html",
+        "broken_by": "css",
+        "broken_locator": "span.submit-confirmation",
+        "intent": "提交"
+      },
+      "expected": {
+        "locator": "//*[contains(@class,'el-message-box')]//*[contains(@class,'btns')]/button[last()]",
+        "target": "del_btn",
+        "layer_hint": "L3"
+      },
+      "note": ""
     },
     {
       "id": "H7_message_box_root_bodychild",
-      "fixture": "el_message_box.html",
-      "broken_by": "css",
-      "broken_locator": "body > .el-message-box",
-      "intent": "提示框根",
-      "expected_locator": ".el-message-box",
-      "expected_target": "mb_root",
-      "layer_hint": "L1"
+      "module": "healer",
+      "rule_version": "healer.v1",
+      "source": "manual",
+      "input": {
+        "fixture": "el_message_box.html",
+        "broken_by": "css",
+        "broken_locator": "body > .el-message-box",
+        "intent": "提示框根"
+      },
+      "expected": {
+        "locator": ".el-message-box",
+        "target": "mb_root",
+        "layer_hint": "L1"
+      },
+      "note": ""
     },
     {
       "id": "H8_dialog_root_bodychild",
-      "fixture": "el_dialog.html",
-      "broken_by": "css",
-      "broken_locator": "body > .el-dialog",
-      "intent": "编辑弹窗根",
-      "expected_locator": ".el-dialog",
-      "expected_target": "dlg_root",
-      "layer_hint": "L1"
+      "module": "healer",
+      "rule_version": "healer.v1",
+      "source": "manual",
+      "input": {
+        "fixture": "el_dialog.html",
+        "broken_by": "css",
+        "broken_locator": "body > .el-dialog",
+        "intent": "编辑弹窗根"
+      },
+      "expected": {
+        "locator": ".el-dialog",
+        "target": "dlg_root",
+        "layer_hint": "L1"
+      },
+      "note": ""
     },
     {
       "id": "H9_message_box_semantic",
-      "fixture": "el_message_box.html",
-      "broken_by": "css",
-      "broken_locator": ".el-message-box__container",
-      "intent": "提示框容器",
-      "expected_locator": ".el-message-box",
-      "expected_target": "mb_root",
-      "layer_hint": "L2"
+      "module": "healer",
+      "rule_version": "healer.v1",
+      "source": "manual",
+      "input": {
+        "fixture": "el_message_box.html",
+        "broken_by": "css",
+        "broken_locator": ".el-message-box__container",
+        "intent": "提示框容器"
+      },
+      "expected": {
+        "locator": ".el-message-box",
+        "target": "mb_root",
+        "layer_hint": "L2"
+      },
+      "note": ""
     },
     {
       "id": "H10_message_box_inner_semantic",
-      "fixture": "el_message_box.html",
-      "broken_by": "css",
-      "broken_locator": ".el-message-box__inner",
-      "intent": "提示框根",
-      "expected_locator": ".el-message-box",
-      "expected_target": "mb_root",
-      "layer_hint": "L2"
+      "module": "healer",
+      "rule_version": "healer.v1",
+      "source": "manual",
+      "input": {
+        "fixture": "el_message_box.html",
+        "broken_by": "css",
+        "broken_locator": ".el-message-box__inner",
+        "intent": "提示框根"
+      },
+      "expected": {
+        "locator": ".el-message-box",
+        "target": "mb_root",
+        "layer_hint": "L2"
+      },
+      "note": ""
     },
     {
       "id": "H11_dialog_semantic",
-      "fixture": "el_dialog.html",
-      "broken_by": "css",
-      "broken_locator": ".el-dialog__container",
-      "intent": "对话框容器",
-      "expected_locator": ".el-dialog",
-      "expected_target": "dlg_root",
-      "layer_hint": "L2"
+      "module": "healer",
+      "rule_version": "healer.v1",
+      "source": "manual",
+      "input": {
+        "fixture": "el_dialog.html",
+        "broken_by": "css",
+        "broken_locator": ".el-dialog__container",
+        "intent": "对话框容器"
+      },
+      "expected": {
+        "locator": ".el-dialog",
+        "target": "dlg_root",
+        "layer_hint": "L2"
+      },
+      "note": ""
     },
     {
       "id": "H12_dialog_inner_semantic",
-      "fixture": "el_dialog.html",
-      "broken_by": "css",
-      "broken_locator": ".el-dialog__inner",
-      "intent": "对话框根",
-      "expected_locator": ".el-dialog",
-      "expected_target": "dlg_root",
-      "layer_hint": "L2"
+      "module": "healer",
+      "rule_version": "healer.v1",
+      "source": "manual",
+      "input": {
+        "fixture": "el_dialog.html",
+        "broken_by": "css",
+        "broken_locator": ".el-dialog__inner",
+        "intent": "对话框根"
+      },
+      "expected": {
+        "locator": ".el-dialog",
+        "target": "dlg_root",
+        "layer_hint": "L2"
+      },
+      "note": ""
     },
     {
       "id": "H13_table_semantic_variant",
-      "fixture": "el_table.html",
-      "broken_by": "css",
-      "broken_locator": ".el-table__bodyer",
-      "intent": "表格主体",
-      "expected_locator": ".el-table__body-wrapper .el-table__body",
-      "expected_target": "tbody",
-      "layer_hint": "L2"
+      "module": "healer",
+      "rule_version": "healer.v1",
+      "source": "manual",
+      "input": {
+        "fixture": "el_table.html",
+        "broken_by": "css",
+        "broken_locator": ".el-table__bodyer",
+        "intent": "表格主体"
+      },
+      "expected": {
+        "locator": ".el-table__body-wrapper .el-table__body",
+        "target": "tbody",
+        "layer_hint": "L2"
+      },
+      "note": ""
     },
     {
       "id": "H14_select_trigger_semantic",
-      "fixture": "el_select.html",
-      "broken_by": "css",
-      "broken_locator": ".el-select__trigger-old",
-      "intent": "选择器触发",
-      "expected_locator": ".el-select__wrapper",
-      "expected_target": "sel_wrapper",
-      "layer_hint": "L2"
+      "module": "healer",
+      "rule_version": "healer.v1",
+      "source": "manual",
+      "input": {
+        "fixture": "el_select.html",
+        "broken_by": "css",
+        "broken_locator": ".el-select__trigger-old",
+        "intent": "选择器触发"
+      },
+      "expected": {
+        "locator": ".el-select__wrapper",
+        "target": "sel_wrapper",
+        "layer_hint": "L2"
+      },
+      "note": ""
     },
     {
       "id": "H15_confirm_intent",
-      "fixture": "el_message_box.html",
-      "broken_by": "css",
-      "broken_locator": ".el-message-box__btns .confirm-old",
-      "intent": "确定删除",
-      "expected_locator": ".el-message-box__btns button.el-button--danger",
-      "expected_target": "del_btn",
-      "layer_hint": "L2"
+      "module": "healer",
+      "rule_version": "healer.v1",
+      "source": "manual",
+      "input": {
+        "fixture": "el_message_box.html",
+        "broken_by": "css",
+        "broken_locator": ".el-message-box__btns .confirm-old",
+        "intent": "确定删除"
+      },
+      "expected": {
+        "locator": ".el-message-box__btns button.el-button--danger",
+        "target": "del_btn",
+        "layer_hint": "L2"
+      },
+      "note": ""
     },
     {
       "id": "H16_cancel_intent",
-      "fixture": "el_message_box.html",
-      "broken_by": "css",
-      "broken_locator": ".el-message-box__btns .cancel-old",
-      "intent": "取消",
-      "expected_locator": ".el-message-box__btns button.el-button--default",
-      "expected_target": "mb_cancel",
-      "layer_hint": "L2"
+      "module": "healer",
+      "rule_version": "healer.v1",
+      "source": "manual",
+      "input": {
+        "fixture": "el_message_box.html",
+        "broken_by": "css",
+        "broken_locator": ".el-message-box__btns .cancel-old",
+        "intent": "取消"
+      },
+      "expected": {
+        "locator": ".el-message-box__btns button.el-button--default",
+        "target": "mb_cancel",
+        "layer_hint": "L2"
+      },
+      "note": ""
     },
     {
       "id": "H17_close_message_intent",
-      "fixture": "el_message_box.html",
-      "broken_by": "css",
-      "broken_locator": ".el-message-box__closebtn-old",
-      "intent": "关闭弹窗",
-      "expected_locator": ".el-message-box__headerbtn",
-      "expected_target": "mb_close",
-      "layer_hint": "L2"
+      "module": "healer",
+      "rule_version": "healer.v1",
+      "source": "manual",
+      "input": {
+        "fixture": "el_message_box.html",
+        "broken_by": "css",
+        "broken_locator": ".el-message-box__closebtn-old",
+        "intent": "关闭弹窗"
+      },
+      "expected": {
+        "locator": ".el-message-box__headerbtn",
+        "target": "mb_close",
+        "layer_hint": "L2"
+      },
+      "note": ""
     },
     {
       "id": "H18_close_dialog_intent",
-      "fixture": "el_dialog.html",
-      "broken_by": "css",
-      "broken_locator": ".el-dialog__closebtn-old",
-      "intent": "关闭对话框",
-      "expected_locator": ".el-dialog__close",
-      "expected_target": "dlg_close",
-      "layer_hint": "L2"
+      "module": "healer",
+      "rule_version": "healer.v1",
+      "source": "manual",
+      "input": {
+        "fixture": "el_dialog.html",
+        "broken_by": "css",
+        "broken_locator": ".el-dialog__closebtn-old",
+        "intent": "关闭对话框"
+      },
+      "expected": {
+        "locator": ".el-dialog__close",
+        "target": "dlg_close",
+        "layer_hint": "L2"
+      },
+      "note": ""
     },
     {
       "id": "H19_select_input_semantic",
-      "fixture": "el_select.html",
-      "broken_by": "css",
-      "broken_locator": ".el-select__input-x",
-      "intent": "下拉输入框",
-      "expected_locator": ".el-select .el-input__inner",
-      "expected_target": "sel_input",
-      "layer_hint": "L2"
+      "module": "healer",
+      "rule_version": "healer.v1",
+      "source": "manual",
+      "input": {
+        "fixture": "el_select.html",
+        "broken_by": "css",
+        "broken_locator": ".el-select__input-x",
+        "intent": "下拉输入框"
+      },
+      "expected": {
+        "locator": ".el-select .el-input__inner",
+        "target": "sel_input",
+        "layer_hint": "L2"
+      },
+      "note": ""
     },
     {
       "id": "H20_message_box_text_semantic",
-      "fixture": "el_message_box.html",
-      "broken_by": "css",
-      "broken_locator": ".el-message-box__text",
-      "intent": "提示框根",
-      "expected_locator": ".el-message-box",
-      "expected_target": "mb_root",
-      "layer_hint": "L2"
+      "module": "healer",
+      "rule_version": "healer.v1",
+      "source": "manual",
+      "input": {
+        "fixture": "el_message_box.html",
+        "broken_by": "css",
+        "broken_locator": ".el-message-box__text",
+        "intent": "提示框根"
+      },
+      "expected": {
+        "locator": ".el-message-box",
+        "target": "mb_root",
+        "layer_hint": "L2"
+      },
+      "note": ""
     },
     {
       "id": "H21_dialog_body_semantic",
-      "fixture": "el_dialog.html",
-      "broken_by": "css",
-      "broken_locator": ".el-dialog__body__old",
-      "intent": "对话框根",
-      "expected_locator": ".el-dialog",
-      "expected_target": "dlg_root",
-      "layer_hint": "L2"
+      "module": "healer",
+      "rule_version": "healer.v1",
+      "source": "manual",
+      "input": {
+        "fixture": "el_dialog.html",
+        "broken_by": "css",
+        "broken_locator": ".el-dialog__body__old",
+        "intent": "对话框根"
+      },
+      "expected": {
+        "locator": ".el-dialog",
+        "target": "dlg_root",
+        "layer_hint": "L2"
+      },
+      "note": ""
     },
     {
       "id": "H22_confirm_intent_english",
-      "fixture": "el_message_box.html",
-      "broken_by": "css",
-      "broken_locator": ".btn-delete-confirm",
-      "intent": "Delete confirm",
-      "expected_locator": ".el-message-box__btns button.el-button--danger",
-      "expected_target": "del_btn",
-      "layer_hint": "L2"
+      "module": "healer",
+      "rule_version": "healer.v1",
+      "source": "manual",
+      "input": {
+        "fixture": "el_message_box.html",
+        "broken_by": "css",
+        "broken_locator": ".btn-delete-confirm",
+        "intent": "Delete confirm"
+      },
+      "expected": {
+        "locator": ".el-message-box__btns button.el-button--danger",
+        "target": "del_btn",
+        "layer_hint": "L2"
+      },
+      "note": ""
     },
     {
       "id": "H23_last_btn_pure_l3",
-      "fixture": "el_message_box.html",
-      "broken_by": "css",
-      "broken_locator": "div.ghost-element-zzz",
-      "intent": "",
-      "expected_locator": "//*[contains(@class,'el-message-box')]//*[contains(@class,'btns')]/button[last()]",
-      "expected_target": "del_btn",
-      "layer_hint": "L3"
+      "module": "healer",
+      "rule_version": "healer.v1",
+      "source": "manual",
+      "input": {
+        "fixture": "el_message_box.html",
+        "broken_by": "css",
+        "broken_locator": "div.ghost-element-zzz",
+        "intent": ""
+      },
+      "expected": {
+        "locator": "//*[contains(@class,'el-message-box')]//*[contains(@class,'btns')]/button[last()]",
+        "target": "del_btn",
+        "layer_hint": "L3"
+      },
+      "note": ""
     },
     {
       "id": "H24_message_btns_primary_l1",
-      "fixture": "el_message_box.html",
-      "broken_by": "css",
-      "broken_locator": ".el-message-box__btns button.el-button--primary",
-      "intent": "保存",
-      "expected_locator": ".el-message-box__btns button.el-button--danger, .el-message-box__btns button.el-button--primary",
-      "expected_target": "del_btn",
-      "layer_hint": "L1"
+      "module": "healer",
+      "rule_version": "healer.v1",
+      "source": "manual",
+      "input": {
+        "fixture": "el_message_box.html",
+        "broken_by": "css",
+        "broken_locator": ".el-message-box__btns button.el-button--primary",
+        "intent": "保存"
+      },
+      "expected": {
+        "locator": ".el-message-box__btns button.el-button--danger, .el-message-box__btns button.el-button--primary",
+        "target": "del_btn",
+        "layer_hint": "L1"
+      },
+      "note": ""
     }
   ]
 }
