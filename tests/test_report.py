@@ -311,6 +311,16 @@ def test_the_footer_says_where_decisions_go():
     assert "decisions.jsonl" in body
 
 
+def test_the_footer_states_the_6_5_limits_where_a_human_reads_them():
+    """白名单与"一次失败一个方案"写在人要照做的地方, 不是只写在代码里"""
+    body = render()
+
+    assert "pages/ tests/ config/" in body
+    assert "一次失败只应用一个方案" in body
+    assert "--stash" in body
+    assert "patches/" in body
+
+
 # ---------------------------------------------------------------------------
 # 落盘: html 给人, json 给 applier
 # ---------------------------------------------------------------------------

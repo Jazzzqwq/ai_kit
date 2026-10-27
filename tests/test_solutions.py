@@ -169,6 +169,18 @@ def test_auto_applicable_is_refused_outside_its_boundary(risk, diff, kind):
                    verify_cmd="", rollback_cmd="", reason="因为")
 
 
+def test_an_assertion_update_is_never_auto_applicable():
+    """6.5 硬约束: 断言变更就是预期变更 —— 低风险也不行, 必须人审"""
+    diff = "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n"
+
+    assert S._can_auto_apply("low", diff, "assertion_update") is False
+    with pytest.raises(ValueError, match="auto_applicable"):
+        S.Proposal(proposal_id="S001", type="assertion_update", title="断言改成 2 行",
+                   target_file=TARGET, diff=diff, risk="low", auto_applicable=True,
+                   confidence=0.9, verify_cmd="", rollback_cmd="", reason="改成分页了")
+    assert S._can_auto_apply("low", diff, "locator_patch") is True, "定位器补丁不受影响"
+
+
 def test_is_code_change_matches_the_code_types():
     """is_code_change 是 6.4 applier 的分流依据: 只有这几类能 apply / rollback"""
     diff = "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n"

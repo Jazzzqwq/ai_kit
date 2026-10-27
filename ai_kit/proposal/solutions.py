@@ -20,9 +20,10 @@
 
 四条硬约定 (都有测试锁着, 也都解释了代价):
 
-1. auto_applicable 只有一个来源: risk=low + diff 非空 + 类型属于改代码。这条在
-   __post_init__ 里强制, 不信任何调用方 —— 尤其是 LLM: 它的补丁没人审过, 一律压在
-   medium 以上, 永远进不了自动应用。自动应用失败一次, 整条链路就没人敢用了。
+1. auto_applicable 只有一个来源: risk=low + diff 非空 + 类型属于改代码, 且不能是
+   assertion_update (6.5 硬约束: 断言变更就是预期变更, 必须人审)。这条在 __post_init__
+   里强制, 不信任何调用方 —— 尤其是 LLM: 它的补丁没人审过, 一律压在 medium 以上,
+   永远进不了自动应用。自动应用失败一次, 整条链路就没人敢用了。
 
 2. diff 必须由原文算出来 (difflib), 不是拼出来的字符串。拿不到目标文件、文件里没有
    原定位器、或候选就是原定位器时, locator_patch 直接不产出并在 stdout 说明卡在哪 ——
@@ -100,6 +101,9 @@ _LLM_TYPES: Tuple[str, ...] = (PROPOSAL_LOCATOR_PATCH, PROPOSAL_WAIT_ADJUST,
                                PROPOSAL_DATA_FIX, PROPOSAL_ASSERTION_UPDATE,
                                PROPOSAL_CONFIG_CHANGE)
 
+# 永不出现在"可自动应用"里的一类 (卡片 6.5 硬约束): 断言变更 = 预期变更, 必须人审
+_AUTO_EXCLUDED: Tuple[str, ...] = (PROPOSAL_ASSERTION_UPDATE,)
+
 RISKS: Tuple[str, ...] = ("low", "medium", "high")
 _RISK_ORDER: Dict[str, int] = {"low": 0, "medium": 1, "high": 2}
 
@@ -148,7 +152,7 @@ class Proposal:
     target_file: str        # 相对路径 (posix 分隔符)
     diff: str               # unified diff (locator_patch 必填)
     risk: str               # low | medium | high
-    auto_applicable: bool   # 仅 risk=low 且 diff 非空且类型改代码
+    auto_applicable: bool   # 仅 risk=low 且 diff 非空且类型改代码, 且非 assertion_update
     confidence: float
     verify_cmd: str         # "pytest tests/test_x.py::test_add -q"
     rollback_cmd: str       # "git checkout -- <target_file>"
@@ -169,8 +173,9 @@ class Proposal:
             raise ValueError("diff 不像 unified diff (要 --- / +++ 头 + @@ hunk)")
         if self.auto_applicable and not _can_auto_apply(self.risk, self.diff, self.type):
             raise ValueError(
-                "auto_applicable 只在 risk=low 且 diff 非空且类型属于改代码时成立: "
-                f"type={self.type} risk={self.risk} diff={'有' if self.diff else '空'}")
+                "auto_applicable 只在 risk=low 且 diff 非空且类型属于改代码时成立, "
+                f"且 assertion_update 恒为 False: type={self.type} risk={self.risk} "
+                f"diff={'有' if self.diff else '空'}")
 
     @property
     def is_code_change(self) -> bool:
@@ -208,9 +213,13 @@ class Proposal:
 # ---------------------------------------------------------------------------
 
 def _can_auto_apply(risk: str, diff: str, kind: str) -> bool:
-    """卡片那句"仅 low 且 diff 非空", 再加一条: 只有改代码的类型才有东西可应用"""
+    """卡片那句"仅 low 且 diff 非空", 再加两条:
+
+    - 只有改代码的类型才有东西可应用 (product_bug / env_issue 没有补丁);
+    - assertion_update 恒为 False (卡片 6.5 硬约束): 断言变更就是预期变更, 必须人审。
+    """
     return (risk == "low" and bool(str(diff or "").strip())
-            and kind in CODE_TYPES)
+            and kind in CODE_TYPES and kind not in _AUTO_EXCLUDED)
 
 
 def _looks_like_unified_diff(diff: str) -> bool:

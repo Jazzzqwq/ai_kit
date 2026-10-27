@@ -1,13 +1,16 @@
 # -*- coding: utf-8 -*-
-"""任务 6.4: 三个动作 — 应用 -> 重跑验证 -> 回滚, 每一步都留账
+"""任务 6.4 / 6.5: 三个动作 + 六步应用 —— 每一步都留账
 
-锁死这些事 (任务卡):
-    --accept / --reject / --defer 三个动作
+锁死这些事:
+    --accept / --reject / --defer 三个动作 (6.4)
     decisions.jsonl 一行一条: {ts, failure_id, proposal_id, decision, verify_result,
     operator, note} —— 就这七个键, 不许悄悄加
+    6.5 的六步: 工作区干净 (脏则 --stash) -> 备份 -> 白名单 -> 单 nodeid 验证 ->
+    verified / rejected -> 记账
 
-为什么 accept 的用例都造一个真 git 仓库: 回滚是 git checkout --, 只有真的打过一次补丁,
-才验证得出"失败自动回滚"是不是真回滚了。假 git 只能测出"我调用过某个函数"。
+为什么 accept 的用例都造一个真 git 仓库: 回滚是 git checkout --, stash 是真 stash,
+只有真的打过一次补丁, 才验证得出"失败自动回滚"是不是真回滚了。假 git 只能测出
+"我调用过某个函数"。
 
 验证器一律注入 (两个参数的假 runner), 真跑 pytest 的只有一条冒烟用例 —— 测试不该
 依赖别人的用例目录长什么样。
@@ -83,6 +86,13 @@ def git(repo: Path, *args: str) -> str:
     proc = subprocess.run([GIT, *args], cwd=repo, capture_output=True, text=True,
                           encoding="utf-8", errors="replace")
     return proc.stdout.strip()
+
+
+def commit(repo: Path, *paths: str, message: str = "add") -> None:
+    """把新增/修改提交掉: 6.5 的工作区检查只认已跟踪的改动"""
+    subprocess.run([GIT, "add", *paths], cwd=repo, check=True, capture_output=True)
+    subprocess.run([GIT, "-c", "user.email=t@t.t", "-c", "user.name=t",
+                    "commit", "-qm", message], cwd=repo, check=True, capture_output=True)
 
 
 def passed(argv, cwd) -> tuple:
@@ -326,12 +336,22 @@ def test_only_pytest_commands_are_allowed_to_run(tmp_path, command):
     assert not (tmp_path / "d.jsonl").exists()
 
 
-def test_verify_argv_accepts_the_two_pytest_spellings():
+def test_verify_argv_accepts_the_two_pytest_spellings_with_a_nodeid():
     assert A.verify_argv("pytest tests/test_x.py::test_a -q") == \
         ["pytest", "tests/test_x.py::test_a", "-q"]
-    assert A.verify_argv("python -m pytest tests/test_x.py -q") == \
-        ["python", "-m", "pytest", "tests/test_x.py", "-q"]
-    assert A.verify_argv("pytest") == ["pytest"], "裸 pytest 合法 (跑全部), 由人自己决定"
+    assert A.verify_argv("python -m pytest tests/test_x.py::test_a -q") == \
+        ["python", "-m", "pytest", "tests/test_x.py::test_a", "-q"]
+
+
+@pytest.mark.parametrize("command", [
+    "pytest",                          # 全量: 别人的失败会被算到这次补丁头上
+    "pytest tests/test_x.py -q",       # 整个文件
+    "pytest tests/ -q",                # 整个目录
+    "python -m pytest -q",
+])
+def test_verify_argv_refuses_anything_that_is_not_one_nodeid(command):
+    """④ 只重跑一个用例: 没有 ::nodeid 的命令不是"验证这次补丁"""
+    assert A.verify_argv(command) is None
 
 
 @pytest.mark.parametrize("command", ["", "  ", "rm -rf /", "python -c 'print(1)'",
@@ -400,6 +420,281 @@ def test_a_missing_git_is_explained_not_a_traceback(monkeypatch, tmp_path):
 
     with pytest.raises(A.ApplierError, match="git 用不了"):
         A.repo_root(str(tmp_path))
+
+
+# ---------------------------------------------------------------------------
+# 6.5 ① 工作区: 脏了默认拒绝, --stash 才暂存并告知
+# ---------------------------------------------------------------------------
+
+@needs_git
+def test_a_dirty_worktree_is_refused_and_left_alone(tmp_path):
+    repo = make_repo(tmp_path)
+    helper = repo / "tests" / "helper.py"
+    helper.write_text("A = 1\n", encoding="utf-8", newline="\n")
+    commit(repo, "tests/helper.py")
+    helper.write_text("A = 2\n", encoding="utf-8", newline="\n")
+
+    with pytest.raises(A.ApplierError, match="未提交的改动") as caught:
+        A.accept(proposal(), failure_id="LC-002", root=str(repo),
+                 decisions=tmp_path / "d.jsonl", runner=passed)
+
+    assert "tests/helper.py" in str(caught.value), "路径要原样给出, 否则人要自己猜是哪个"
+    assert helper.read_text(encoding="utf-8") == "A = 2\n", "人的改动不该被悄悄收走"
+    assert body_of(repo) == SOURCE
+    assert not (repo / "patches").exists(), "拒绝时一个备份文件都不该留下"
+
+
+@needs_git
+def test_untracked_generated_files_are_not_dirty(tmp_path):
+    """报告与账本本来就是未跟踪的生成物; 把它们算成脏, 每次应用都先拦自己一道"""
+    repo = make_repo(tmp_path)
+    (repo / "report.json").write_text("{}", encoding="utf-8")
+    (repo / "decisions.jsonl").write_text("", encoding="utf-8")
+
+    assert A.workspace_changes(str(repo)) == []
+
+
+@needs_git
+def test_stash_lets_accept_proceed_and_says_how_to_restore(tmp_path):
+    repo = make_repo(tmp_path)
+    helper = repo / "tests" / "helper.py"
+    helper.write_text("A = 1\n", encoding="utf-8", newline="\n")
+    commit(repo, "tests/helper.py")
+    helper.write_text("A = 2\n", encoding="utf-8", newline="\n")
+
+    item = A.accept(proposal(), failure_id="LC-002", root=str(repo),
+                    decisions=tmp_path / "d.jsonl", runner=passed, stash=True)
+
+    assert item.verify_result == A.VERIFY_PASSED
+    assert "stash@{0}" in item.note and "git stash pop" in item.note
+    assert ".el-dialog" in body_of(repo)
+    assert "ai-kit" in git(repo, "stash", "list"), "人的改动不能凭空消失"
+
+    git(repo, "stash", "pop")
+    assert helper.read_text(encoding="utf-8") == "A = 2\n", "stash 里的改动要能拿回来"
+
+
+# ---------------------------------------------------------------------------
+# 6.5 ② 备份: 补丁原文落盘 / 可选分支
+# ---------------------------------------------------------------------------
+
+@needs_git
+def test_the_patch_is_backed_up_before_it_is_applied(tmp_path):
+    repo = make_repo(tmp_path)
+
+    item = A.accept(proposal(), failure_id="LC-002", root=str(repo),
+                    decisions=tmp_path / "d.jsonl", runner=passed)
+
+    saved = repo / "patches" / "LC-002_S001.patch"
+    assert saved.read_text(encoding="utf-8") == DIFF
+    assert "patches/LC-002_S001.patch" in item.note
+
+
+@needs_git
+def test_the_backup_stays_when_the_verify_fails(tmp_path):
+    """没验证过的补丁也是证据: 复盘时要知道"当时打的是什么"""
+    repo = make_repo(tmp_path)
+
+    A.accept(proposal(), failure_id="LC-002", root=str(repo),
+             decisions=tmp_path / "d.jsonl", runner=failed)
+
+    assert (repo / "patches" / "LC-002_S001.patch").is_file()
+
+
+@needs_git
+def test_a_branch_backup_is_optional_and_never_overwritten(tmp_path):
+    repo = make_repo(tmp_path)
+
+    item = A.accept(proposal(), failure_id="LC-002", root=str(repo),
+                    decisions=tmp_path / "d.jsonl", runner=passed, backup_branch=True)
+
+    assert "fix/LC-002" in git(repo, "branch", "--list", "fix/LC-002")
+    assert "备份分支: fix/LC-002" in item.note
+    with pytest.raises(A.ApplierError, match="已存在"):
+        A.create_backup_branch(str(repo), "LC-002")
+
+
+@needs_git
+def test_a_branch_backup_is_not_created_by_default(tmp_path):
+    repo = make_repo(tmp_path)
+
+    A.accept(proposal(), failure_id="LC-002", root=str(repo),
+             decisions=tmp_path / "d.jsonl", runner=passed)
+
+    assert git(repo, "branch", "--list", "fix/LC-002") == "", "分支列表不该被踩满"
+
+
+# ---------------------------------------------------------------------------
+# 6.5 ③ 白名单: pages/ tests/ config/; 产品代码永不改
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("rel", ["pages/login_page.py", "tests/test_x.py",
+                                 "config/qa.yaml"])
+def test_the_three_allowed_dirs_pass(rel):
+    assert A._check_whitelist(rel) is None
+
+
+@pytest.mark.parametrize("rel", ["scripts/fix.py", "conftest.py", "docs/x.md"])
+def test_anything_else_is_refused(rel):
+    with pytest.raises(A.ApplierError, match="白名单"):
+        A._check_whitelist(rel)
+
+
+@pytest.mark.parametrize("rel", ["ai_kit/tests/test_x.py", "ai_kit/core.py"])
+def test_the_product_package_is_never_touched(rel):
+    """名字里带 tests 也不行: ai_kit/ 下的一切都是产品代码"""
+    with pytest.raises(A.ApplierError, match="产品代码"):
+        A._check_whitelist(rel)
+
+
+@needs_git
+def test_a_product_file_is_refused_before_anything_is_written(tmp_path):
+    repo = make_repo(tmp_path)
+    (repo / "ai_kit").mkdir()
+    source = repo / "ai_kit" / "core.py"
+    source.write_text("X = 1\n", encoding="utf-8", newline="\n")
+    commit(repo, "ai_kit/core.py")
+
+    with pytest.raises(A.ApplierError, match="产品代码"):
+        A.accept(proposal(target_file="ai_kit/core.py"), failure_id="LC-002",
+                 root=str(repo), decisions=tmp_path / "d.jsonl", runner=passed)
+
+    assert not (repo / "patches").exists()
+    assert source.read_text(encoding="utf-8") == "X = 1\n"
+
+
+@needs_git
+def test_a_config_change_can_be_applied(tmp_path):
+    """config_change 的落点在 config/, 白名单里留着它"""
+    repo = make_repo(tmp_path)
+    cfg = repo / "config" / "qa.yaml"
+    cfg.parent.mkdir()
+    cfg.write_text("timeout: 10\n", encoding="utf-8", newline="\n")
+    commit(repo, "config/qa.yaml")
+    patch = ("--- a/config/qa.yaml\n"
+             "+++ b/config/qa.yaml\n"
+             "@@ -1 +1 @@\n"
+             "-timeout: 10\n"
+             "+timeout: 20\n")
+
+    A.accept(proposal(type="config_change", target_file="config/qa.yaml", diff=patch,
+                      auto_applicable=False),
+             failure_id="LC-002", root=str(repo), decisions=tmp_path / "d.jsonl",
+             runner=passed)
+
+    assert cfg.read_text(encoding="utf-8") == "timeout: 20\n"
+
+
+# ---------------------------------------------------------------------------
+# 6.5 ④ / ⑤: 单 nodeid 与 verified / rejected 标记
+# ---------------------------------------------------------------------------
+
+def test_status_of_maps_one_ledger_row_to_a_state():
+    assert A.status_of({"decision": "accept", "verify_result": "passed"}) == \
+        A.OUTCOME_VERIFIED
+    assert A.status_of({"decision": "accept", "verify_result": "failed"}) == \
+        A.OUTCOME_REJECTED
+    assert A.status_of({"decision": "reject", "verify_result": "skipped"}) == \
+        A.OUTCOME_REJECTED
+    assert A.status_of({"decision": "defer", "verify_result": "skipped"}) == \
+        A.OUTCOME_PENDING
+
+
+def test_a_failure_without_records_is_pending(tmp_path):
+    assert A.outcome(tmp_path / "none.jsonl", "LC-9", "S001") == A.OUTCOME_PENDING
+
+
+@needs_git
+def test_the_ledger_marks_verified_then_rejected(tmp_path):
+    repo = make_repo(tmp_path)
+    decisions = tmp_path / "d.jsonl"
+
+    ok = A.accept(proposal(), failure_id="LC-002", root=str(repo),
+                  decisions=decisions, runner=passed)
+    assert "状态: verified" in ok.note
+    assert A.outcome(decisions, "LC-002", "S001") == A.OUTCOME_VERIFIED
+
+    git(repo, "checkout", "--", TARGET)
+    bad = A.accept(proposal(), failure_id="LC-003", root=str(repo),
+                   decisions=decisions, runner=failed)
+    assert "状态: rejected" in bad.note
+    assert A.outcome(decisions, "LC-003", "S001") == A.OUTCOME_REJECTED
+
+
+@needs_git
+def test_a_verify_command_without_a_nodeid_is_refused_before_apply(tmp_path):
+    repo = make_repo(tmp_path)
+
+    with pytest.raises(A.ApplierError, match="单用例"):
+        A.accept(proposal(verify_cmd=f"pytest {TARGET} -q"), failure_id="LC-002",
+                 root=str(repo), decisions=tmp_path / "d.jsonl", runner=passed)
+
+    assert body_of(repo) == SOURCE
+
+
+# ---------------------------------------------------------------------------
+# 硬约束: 一次失败只应用一个方案 / 断言变更由人审
+# ---------------------------------------------------------------------------
+
+@needs_git
+def test_a_second_proposal_for_the_same_failure_is_refused(tmp_path):
+    repo = make_repo(tmp_path)
+    decisions = tmp_path / "d.jsonl"
+
+    A.accept(proposal(), failure_id="LC-002", root=str(repo),
+             decisions=decisions, runner=passed)
+    git(repo, "checkout", "--", TARGET)
+
+    with pytest.raises(A.ApplierError, match="最多应用一个方案"):
+        A.accept(proposal(proposal_id="S002"), failure_id="LC-002", root=str(repo),
+                 decisions=decisions, runner=passed)
+
+    assert 'locator = ".el-dialog"' not in body_of(repo)
+
+
+@needs_git
+def test_another_failure_may_use_another_proposal(tmp_path):
+    """"一次失败一个方案"不该连累下一次失败"""
+    repo = make_repo(tmp_path)
+    decisions = tmp_path / "d.jsonl"
+
+    A.accept(proposal(), failure_id="LC-002", root=str(repo),
+             decisions=decisions, runner=passed)
+    git(repo, "checkout", "--", TARGET)
+    A.accept(proposal(), failure_id="LC-003", root=str(repo),
+             decisions=decisions, runner=passed)
+
+    assert [row["failure_id"] for row in lines(decisions)] == ["LC-002", "LC-003"]
+
+
+@needs_git
+def test_an_assertion_update_is_applied_only_by_a_human_and_says_so(tmp_path):
+    """断言变更可以被人采纳, 但账上必须看得见"这一步是人审的"""
+    repo = make_repo(tmp_path)
+
+    item = A.accept(proposal(type="assertion_update", auto_applicable=False),
+                    failure_id="LC-002", root=str(repo),
+                    decisions=tmp_path / "d.jsonl", runner=passed)
+
+    assert "断言变更" in item.note
+    assert "状态: verified" in item.note
+
+
+@needs_git
+def test_the_cli_passes_the_stash_flag(tmp_path, monkeypatch, capsys):
+    repo = make_repo(tmp_path)
+    helper = repo / "tests" / "helper.py"
+    helper.write_text("A = 1\n", encoding="utf-8", newline="\n")
+    commit(repo, "tests/helper.py")
+    helper.write_text("A = 2\n", encoding="utf-8", newline="\n")
+    monkeypatch.setattr(A, "run_verify", passed)
+
+    code = A.main(["--decision", "S001", "--accept", "--stash",
+                   "--pending", str(_pending(tmp_path)),
+                   "--decisions", str(tmp_path / "d.jsonl"), "--repo", str(repo)])
+
+    assert code == 0
+    assert "git stash pop" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------

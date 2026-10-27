@@ -9,7 +9,8 @@
                  + 两个终态产物 (缺陷单草稿 / 环境检查清单)
     solutions  : 修复方案类型学 (改定位器/加等待/改断言/提缺陷/修环境) + 生成器
     report     : 人工确认用单文件 HTML 报告 (失败现场 + 诊断 + 方案, 含 report.json)
-    applier    : 应用方案 -> 重跑验证 -> 回滚, 每个动作记一行 decisions.jsonl
+    applier    : 六步应用 (干净 -> 备份 -> 补丁 -> 单 nodeid 验证 -> verified/rejected
+                 -> decisions.jsonl); 只改 pages/ tests/ config/, 一次失败只应用一个方案
 
 6.1 已落地 diagnoser。用法:
 
@@ -57,4 +58,18 @@ wait_adjust 只给参数不给假 diff, 复杂类型才调 LLM (附失败上下�
 accept 会真的改文件并跑 verify_cmd, 验证不过自动 git checkout 回滚; 三个动作都往
 decisions.jsonl 追加 {ts, failure_id, proposal_id, decision, verify_result, operator,
 note}。不做 Web 控制台: 报告是一张能发出去的纸, 决策是命令行。
+
+6.5 把 accept 补成六步 (每一步都有拒绝理由, 也都会留痕):
+
+    ① 工作区: 只看被 git 跟踪的改动 (报告/账本是未跟踪的生成物, 不挡路)。脏了默认
+       拒绝; --stash 才先暂存, 并告诉你 git stash pop 怎么恢复。
+    ② 备份: 补丁落盘到 <repo>/patches/<failure>_<proposal>.patch; --branch-backup
+       额外建 fix/<failure_id> 分支。
+    ③ 白名单: 只改 pages/ tests/ config/ 下的目标文件, ai_kit/ 永不改。
+    ④ 只重跑一个 nodeid: pytest <file>::<test> -q; 跑全量不算验证这次补丁。
+    ⑤ passed -> 保留 + note 标 verified; failed -> 回滚 + note 标 rejected。
+    ⑥ 无论结果如何都记账。
+
+硬约束: 绝不自动应用 (只有人敲 --accept 才改文件); 单次失败最多应用 1 个方案;
+断言变更 (assertion_update) 恒 auto_applicable=false, 必须人审。
 """

@@ -441,8 +441,11 @@ def _proposals(report: FailureReport, pending_name: str) -> str:
 
 def _footer(report: FailureReport, pending_name: str) -> str:
     return (f"<footer>ai_kit report v{REPORT_VERSION} · {_esc(report.failure_id)}<br>"
-            f"采纳会在仓库里直接改文件并跑 verify_cmd, 验证不通过自动回滚; 三个动作都会往 "
-            f"decisions.jsonl 追加一行。方案数据见 {_esc(pending_name or PENDING_NAME)}。</footer>")
+            "采纳会先把补丁备份到 patches/, 再在仓库里改文件并跑 verify_cmd, 验证不通过"
+            "自动回滚; 只改 pages/ tests/ config/ 下的目标文件 (产品代码永不改), "
+            "一次失败只应用一个方案。工作区脏时 --accept 会拒绝 (加 --stash 先暂存)。"
+            f"三个动作都会往 decisions.jsonl 追加一行。方案数据见 "
+            f"{_esc(pending_name or PENDING_NAME)}。</footer>")
 
 
 def render(report: FailureReport, *, pending_name: str = PENDING_NAME) -> str:
