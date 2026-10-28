@@ -1,11 +1,22 @@
 # 变更记录
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号沿用 `pyproject.toml`。
-仓库尚未打 tag、也未发布 PyPI，`0.1.0` 指当前主线。
+首个版本已打 tag `v0.1.0`（对应 Gitee Releases），未发布 PyPI。
 
-## [Unreleased]
+## [0.1.0] - 2026-10-28
 
-### 新增
+首个可用版本：可移植的 Web UI 测试 AI 工具箱，依赖只有 `selenium` + `requests`。
+
+### 模块
+
+- `healer`：L1-L4 分层定位自愈，top-1 87.5% / top-3 100%（24 条黄金样本；L4 仅 `--llm` 产出候选）。
+- `analyzer`：失败归因规则 + 可选 LLM，严格准确率 96.7%、含容错 100%，带信心校准（gap/ECE）。
+- `perception` / `generator`：清单 → 用例计划 → pytest 代码，eid 解析率 100%、可执行率 92.3%。
+- `proposal`：诊断 / 方案 / 人工确认 HTML 报告 / 六步应用（备份、白名单、单 nodeid 验证、回滚、记账）。
+- `evaluation`：黄金集 + 指标 + 成本 → md/json 报告，默认离线 0 成本。
+- 数据安全：出境点清单 + `sanitize`，采集侧 `value` 在页面内就换 `[REDACTED]`。
+
+### 新增（本次收口）
 
 - `utils.sanitize_structure`：递归把嵌套 `dict`/`list`/`tuple` 里的每个字符串过 `sanitize`。
   JSON 里的值没有标签和字段名提示，对整段 JSON 跑正则会误伤 eid 与行数，所以逐字符串过筛。
@@ -34,14 +45,3 @@
   召回 29.2%、元素覆盖率 23.4%（66/282）、eid 解析率 100%（260/260）、可执行率 92.3%（108/117）、
   analyzer 规则准确率 96.7%，逐项一致。
 - 全量回归 `1145 passed, 2 warnings in 136.13s`；`run_eval` 离线约 12 秒、0 成本。
-
-## [0.1.0] - 2026-10-28
-
-首个可用版本：可移植的 Web UI 测试 AI 工具箱，依赖只有 `selenium` + `requests`。
-
-- `healer`：L1-L4 分层定位自愈，top-1 87.5% / top-3 100%（24 条黄金样本；L4 仅 `--llm` 产出候选）。
-- `analyzer`：失败归因规则 + 可选 LLM，严格准确率 96.7%、含容错 100%，带信心校准（gap/ECE）。
-- `perception` / `generator`：清单 → 用例计划 → pytest 代码，eid 解析率 100%、可执行率 92.3%。
-- `proposal`：诊断 / 方案 / 人工确认 HTML 报告 / 六步应用（备份、白名单、单 nodeid 验证、回滚、记账）。
-- `evaluation`：黄金集 + 指标 + 成本 → md/json 报告，默认离线 0 成本。
-- 数据安全：出境点清单 + `sanitize`，采集侧 `value` 在页面内就换 `[REDACTED]`。
