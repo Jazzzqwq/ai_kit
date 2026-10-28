@@ -67,13 +67,29 @@ CATEGORY_KEYWORDS: Dict[str, str] = {
 }
 
 
+# LLM 偶尔直接回 prompt 里的编号 ("5" / "第5类"): 编号不在关键词表里, 不接住就会把
+# "5" 当分类流到下游 blame。只能整串匹配 —— 塞进 CATEGORY_KEYWORDS 会误伤含数字的文本
+_CATEGORY_BY_ORDINAL: Dict[str, str] = {
+    "1": CATEGORY_SCRIPT_HEALER,
+    "2": CATEGORY_SCRIPT_WAIT,
+    "3": CATEGORY_SYNTAX,
+    "4": CATEGORY_ENV,
+    "5": CATEGORY_PRODUCT_BUG,
+    "6": CATEGORY_UNKNOWN,
+}
+
+
 def normalize_category(raw: str) -> str:
     """把 LLM 报的分类归一到六类标签; 认不出来原样返回, 由调用方决定要不要用
 
     Phase2 和方案层的 blame 判定都吃这一张表 —— 关键词表只维护一份, 两边口径
     不会各说各话。
     """
-    text = str(raw or "")
+    text = str(raw or "").strip()
+    # 纯编号: prompt 里 1-6 列举, 模型会照抄编号 (真实现场实测到过 2 条 "5")
+    ordinal = re.fullmatch(r"第?\s*([1-6])\s*[类项]?[.、]?", text)
+    if ordinal:
+        return _CATEGORY_BY_ORDINAL[ordinal.group(1)]
     for keyword, category in CATEGORY_KEYWORDS.items():
         if keyword in text:
             return category

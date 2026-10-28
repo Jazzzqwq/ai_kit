@@ -17,7 +17,7 @@ Python `>=3.9`，版本 `0.1.0`。默认 0 成本跑规则层，加 `--llm` 才�
 
 | 测试现场的老问题 | ai_kit 的做法 |
 | --- | --- |
-| 定位器一改就崩，靠人肉 F12 猜 | `healer` 四层自愈：L1 规则映射 → L2 多语义 CSS → L3 相对 XPath → L4 LLM 兜底；黄金集实测 top-1 87.5% / top-3 100%（n=24） |
+| 定位器一改就崩，靠人肉 F12 猜 | `healer` 四层自愈：L1 规则映射 → L2 多语义 CSS → L3 相对 XPath → L4 LLM 兜底；黄金集实测 top-1 91.7% / top-3 100%（n=24，含真实 LLM） |
 | 挂了说不清是谁的锅 | `analyzer` 六分类归因（5 类规则可判 + 未知兜底），实测严格 96.7% / 含容错 100%（n=30）；`proposal` 把结论投影成 4 路 blame 与修复方案 |
 | 用例一条条手写 | `perception` 采集 DOM → 元素清单 → 页面原型 → 策略 → 用例计划 → 渲染 pytest；`generator` 两步法补业务断言 |
 | "AI 生成得好不好"没有度量 | `evaluation` 黄金集 + 指标纯函数 + 成本台账，`run_eval` 一条命令出 md/json 报告，接上 CI 即可周更提交回仓库 |
@@ -105,17 +105,19 @@ schema 这一关，才允许变代码。
 
 ## 评测实测数字
 
-2026-10-28 本机黄金集全量实测（离线模式，0 成本，`python -m ai_kit.evaluation.run_eval`）：
+2026-10-28 本机黄金集全量实测（**含真实 LLM**，单次成本 0.0287 元，`python -m ai_kit.evaluation.run_eval --llm`）：
 
 | 套件 | 样本 n | 主指标 | 实测 | 诚实标注 |
 | --- | --- | --- | --- | --- |
-| healer | 24 | top-1 / top-3 命中 | **87.5% / 100.0%** | L4 离线恒 0 候选，是口径限制不是退化；分层 L1 25.0% / L2 66.7% / L3 8.3% |
-| analyzer | 30 | 严格 / 含容错准确 | **96.7% / 100.0%** | 平均置信 0.803 − 准确 0.967 = **-0.163 欠自信**，ECE(5箱) 0.163；唯一严格错例：定位器被判成等待（Stale 词面先命中） |
+| healer | 24 | top-1 / top-3 命中 | **91.7% / 100.0%** | 两次全量 `--llm` 分别 95.8% / 91.7%，top-3 两次都是 100% —— 差的 1 条 case 来自 L4 的 LLM 非确定性，不是回归。分层 L1 25.0% / L2 37.5% / L3 0.0% / **L4 37.5%**：L4 真跑后贡献了 9 条 top-1，离线时它恒 0 候选 |
+| analyzer | 30 | 规则严格 / 含容错 | **96.7% / 100.0%** | 平均置信 0.803 − 准确 0.967 = **-0.163 欠自信**，ECE(5箱) 0.163；唯一严格错例：定位器被判成等待（Stale 词面先命中） |
+| analyzer Phase-2 LLM | 30 条中 15 条升级 | 准确率 / 含容错 | **93.3% / 96.7%** | **LLM 没有比规则更准**（93.3% vs 96.7%），它的价值在置信度校准（gap +0.008 vs 规则 -0.163）。首轮实测只有 86.7%，查出是 LLM 把 prompt 里的编号“5”当分类回、`normalize_category` 原样透传；修复后 93.3%（详 `tests/test_analyzer.py`） |
 | analyzer blame | 30 | 分类一致率 | 96.7% → 容错后 100% | 分布 test_code 17 / product 6 / environment 5 / unknown 2 |
-| generator | **10** (手写 2 + 采集冻结 8) | py_compile / 覆盖率 | 100% / 29.2% | ⚠ **骨架模式，只证明管道通，不证明生成质量**；覆盖率低是分母（业务断言）未喂 LLM 所致 |
+| generator | **10** (手写 2 + 采集冻结 8) | py_compile / 覆盖率 | **100% / 31.1%** | 真实 `--llm`，不再是骨架模式。覆盖率是个**口径偏低的指标**：`_plan_to_text` 只拼 class/method/title/steps/expected，steps 是 `{action, eid}` 结构化动作，页面中文文案本来就不在文本里 —— 骨架 29.2% → 真 LLM 31.1%，只差 1.9pp，说明瓶颈不在“有没喂 LLM” |
 | generator 感知链 | **8** 条采集冻结样本 | eid 解析率 / 可执行率 | **100.0% (260/260) / 92.3% (108/117)** | 确定性规划器无幻觉，解析率预期接近 100%，真能打破它的是 --llm 引用幻觉（本期未接）；可执行率里 9 条 needs_review 全部同一原因：`set_network` 需 CDP 断网、渲染器诚实拒收；活页面层离线跳过 (live_skipped) 不影响这两项 |
 | 方案层人决策 proposal | **1** | 接受率 / 验证成功率 | 0.0% / n/a | ⚠ **n=1 仅一条 reject，样本量不足以谈比率**；验证成功率 n/a 是因 0 条被采纳（非 0%）；类型 join 认出 0 / unknown 1（本仓库未留档 report.json，宁可一桶 unknown 也不从 note 猜类型） |
-| 真实 LLM 冒烟 | 1+1 | 三条断言 | **通过** | 真调到 / usage 采到 / 价目表认识型号；总成本 ≈0.0031 元（qwen-plus），n=1 只证通路 |
+| 全量 `--llm` 成本 | 64 | — | **0.0287 元/次** | analyzer 15 次 0.0078 元 + generator 10 次 0.0209 元（qwen-plus，价目表快照输入 0.0008/输出 0.002 元每 1k）；最贵的是一次生成 8708 输出 tokens |
+| 真实 LLM 冒烟 | 1+1 | 三条断言 | **通过** | 真调到 / usage 采到 / 价目表认识型号；总成本 ≈0.0029 元（analyzer 0.000552 + generator 0.002307），n=1 只证通路 |
 
 <details>
 <summary>真实 LLM 冒烟报告原文（2026-10-27 真 key 实跑，未改动）</summary>
@@ -171,7 +173,7 @@ schema 这一关，才允许变代码。
 ```bash
 pip install -e ".[test]" && python -m pytest -q          # 全量回归（Windows 先设 PYTHONUTF8=1）
 python -m ai_kit.evaluation.golden                        # 黄金集规模体检，样本不够退出码 1
-python -m ai_kit.evaluation.run_eval                      # 离线评测出报告；加 --llm --smoke 才花钱
+python -m ai_kit.evaluation.run_eval                      # 离线评测出报告；加 --llm 全量约 0.029 元
 ```
 
 真实归因/自愈需要 provider 配置：`AI_ACTIVE_PROVIDER` + 对应 `*_API_KEY`（见 `.env.example`），
@@ -244,10 +246,9 @@ CI 默认路径 0 成本；报告数字与代码口径冲突时以重跑为准�
 4. **perception 真检出 P/R**（元素该采到的采到了几成 / 采到的里有几成是真的）—— 需要人工
    标注每页元素真值，采集一张页就要标一张，成本高；本期只上了解析率/可执行率这两个
    无需真值的链路率，**P/R 没做，不装做能做**；
-5. **CI 真实触发验证 + 全量 `--llm` 评测** —— 仓库现托管 Gitee（`gitee.com/twinkleqwq/ai_kit`），
+5. **CI 真实触发验证** —— 仓库现托管 Gitee（`gitee.com/twinkleqwq/ai_kit`），
    `.github/workflows/eval.yml` 不会被 Gitee 执行；要自动周更需接 Gitee Go（或回 GitHub）。
-   当前 CI 等价物是本地手动跑 `run_eval --llm --smoke`（已实测通过）；全量 `--llm`
-   （30+24 条真调）花钱多，没顺手跑。
+   全量 `--llm` 已跑完（0.0287 元/次，数字见上表），CI 等价物就是本地手动跑 `run_eval --llm`。
 
 ## 许可证
 
