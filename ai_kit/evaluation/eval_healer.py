@@ -90,6 +90,15 @@ def run(use_llm: bool = False, driver=None) -> Dict[str, Any]:
                 intent=sample.get("intent", ""), llm_client=llm_client,
             )
 
+            # 稳定性: 同一夹具同一入参连跑两次, 候选序列是否逐字节一致。
+            # 只有纯规则链路才重复跑 —— 注入 LLM 时再问一次等于把这次评测的钱翻倍。
+            repeat_same: Optional[bool] = None
+            if llm_client is None:
+                again = rank_candidates(driver, broken_by, sample["broken_locator"],
+                                        intent=sample.get("intent", ""))
+                repeat_same = ([(c.by, c.locator) for c in again]
+                               == [(c.by, c.locator) for c in cands])
+
             expected_target = expected["target"]
             hits: List[bool] = []
             winner_rank = None
@@ -119,6 +128,8 @@ def run(use_llm: bool = False, driver=None) -> Dict[str, Any]:
                 "layer_hint": expected.get("layer_hint"),
                 "top1_hit": metrics.top_k_hit(hits, 1),
                 "top3_hit": metrics.top_k_hit(hits, 3),
+                "n_hits": sum(1 for h in hits if h),
+                "repeat_same": repeat_same,
                 "candidates": [(cand.by, cand.locator, round(cand.confidence, 2), cand.layer)
                                 for cand in cands[:6]],
             })
@@ -128,6 +139,7 @@ def run(use_llm: bool = False, driver=None) -> Dict[str, Any]:
 
     tk = metrics.top_k_rates(candidate_hits_series, ks=(1, 3))
     layers = metrics.layer_breakdown(winners, baseline=_README_SHARE)
+    stability = metrics.healing_stability(case_reports)
     n = len(cases)
     return {
         "suite": "healer",
@@ -141,6 +153,7 @@ def run(use_llm: bool = False, driver=None) -> Dict[str, Any]:
         "layers": layers,
         "readme_share": dict(_README_SHARE),
         "no_hit_cases": layers["no_hit"],
+        "stability": stability,
         "cases": case_reports,
     }
 

@@ -174,6 +174,54 @@ def test_element_coverage_edge_cases():
     assert m.element_coverage(["e1", "e1", " e1 "], ["e1"])["total"] == 1
 
 
+def test_cross_page_generalization_takes_the_weakest_page():
+    """泛化看短板: 7 页好 1 页空, 均值 87% 但 min 必须是 0"""
+    rows = [{"id": f"p{i}", "archetype": "form", "covered": 10, "total": 10, "n_cases": 3}
+            for i in range(7)]
+    rows.append({"id": "empty", "archetype": "detail", "covered": 9,
+                 "total": 10, "n_cases": 0})
+    r = m.cross_page_generalization(rows)
+
+    assert r["n_pages"] == 8 and r["n_archetypes"] == 2
+    assert r["coverage"]["min"] == 0.0, "没派生用例的页按 0 计, 不能因为它 covered=9 就算 90%"
+    assert r["coverage"]["max"] == 1.0
+    assert r["zero_case_pages"] == ["empty"], "要点名是哪一页, 不然修的时候就抓瞎"
+    assert r["by_archetype"]["detail"]["rate"] == 0.9, "分桶率按元素数相加, 不对每页 rate 求平均"
+
+
+def test_cross_page_generalization_empty_and_median():
+    assert m.cross_page_generalization([])["n_pages"] == 0
+    rows = [{"id": "a", "archetype": "form", "covered": 1, "total": 4, "n_cases": 1},
+            {"id": "b", "archetype": "form", "covered": 2, "total": 4, "n_cases": 1},
+            {"id": "c", "archetype": "login", "covered": 3, "total": 4, "n_cases": 1}]
+    r = m.cross_page_generalization(rows)
+    assert r["coverage"]["median"] == 0.5
+    assert r["below_half_pages"] == 1, "0.25 那一页低于一半, 0.5 不算低"
+
+
+def test_healing_stability_separates_untested_from_unstable():
+    """没重复调用 (LLM 模式) 的条不进分母 —— None 不能当成 False 拉低一致性"""
+    rows = [{"id": "a", "repeat_same": True, "n_hits": 2, "top1_hit": True, "top3_hit": True},
+            {"id": "b", "repeat_same": True, "n_hits": 1, "top1_hit": True, "top3_hit": True},
+            {"id": "c", "repeat_same": None, "n_hits": 0, "top1_hit": False, "top3_hit": False}]
+    r = m.healing_stability(rows)
+
+    assert r["repeat_tested"] == 2 and r["determinism_rate"] == 1.0
+    assert r["redundancy_rate"] == round(1 / 3, 4), "冗余度分母是全部条数, 没命中的也计入"
+    assert r["rank_stability"] == 1.0
+    assert r["fragile_cases"] == ["b"], "命中但只有一个候选 = 排头失效就没下一手"
+
+
+def test_healing_stability_detects_drift_and_zero_denominators():
+    rows = [{"id": "a", "repeat_same": False, "n_hits": 1, "top1_hit": True, "top3_hit": True},
+            {"id": "b", "repeat_same": True, "n_hits": 1, "top1_hit": False, "top3_hit": True}]
+    r = m.healing_stability(rows)
+    assert r["determinism_rate"] == 0.5
+    assert r["rank_stability"] == 0.5, "top1/top3: 命中两次但只有一次排头"
+    empty = m.healing_stability([])
+    assert empty["n"] == 0 and empty["determinism_rate"] == 0.0
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

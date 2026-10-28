@@ -21,6 +21,7 @@ from ai_kit.generator import core as gcore
 from ai_kit.evaluation import golden, metrics, cost_tracker as _ct
 from ai_kit.perception import from_inventory, plan as pplan, render as prender
 from ai_kit.perception import resolve_ref, verify as pverify
+from ai_kit.perception.archetype import classify as classify_archetype
 
 try:
     from ai_kit.generator.prompts import TEST_USER_PREFIXES
@@ -56,6 +57,8 @@ def _chain_case(c: Dict[str, Any]) -> Dict[str, Any]:
     """
     raw_inv = (c.get("input") or {}).get("inventory") or {}
     inv = from_inventory(raw_inv)
+    # 原型分桶用纯规则分类 (0 成本), 给跨页泛化看"规则是不是只对某类页有效"
+    archetype = classify_archetype(inv).archetype
     p0 = pplan(inv)
     src = prender(p0, inventory=inv)            # standalone: {case_id: 源码}, .problems 是拒收理由
     v = pverify(p0, inventory=inv, sources=src,
@@ -73,6 +76,7 @@ def _chain_case(c: Dict[str, Any]) -> Dict[str, Any]:
     elem_cov = metrics.element_coverage(inv.by_eid.keys(), [row["ref"] for row in ref_rows])
     return {
         "id": c["id"],
+        "archetype": archetype,
         "n_plan_cases": len(v.cases),
         "refs": ref_rows,
         "cases": case_rows,
@@ -180,6 +184,14 @@ def run(use_llm: bool = False, limit: Optional[int] = None) -> Dict[str, Any]:
                  if isinstance(ch.get("element_coverage"), dict)]
     elem_total = sum(int(x.get("total") or 0) for x in elem_rows)
     elem_covered = sum(int(x.get("covered") or 0) for x in elem_rows)
+    # 跨页泛化: 每页一条 (原型 / 被引用元素 / 派生用例数)。链路报错的页同样进分母、
+    # 覆盖率按 0 计 —— 它归到 zero_case_pages 里点名, 不静默从分母里消失。
+    gen_pages = [{"id": ch["id"],
+                  "archetype": ch.get("archetype"),
+                  "covered": (ch.get("element_coverage") or {}).get("covered", 0),
+                  "total": (ch.get("element_coverage") or {}).get("total", 0),
+                  "n_cases": int(ch.get("n_plan_cases") or 0)}
+                 for ch in chains]
 
     # 一条 case 对应一个页面 → 每页成本才有意义 (每次成本随 prompt 长短飘)
     return {
@@ -203,6 +215,7 @@ def run(use_llm: bool = False, limit: Optional[int] = None) -> Dict[str, Any]:
                 "covered": elem_covered,
                 "rate": round(metrics.safe_div(elem_covered, elem_total), 4),
             },
+            "generalization": metrics.cross_page_generalization(gen_pages),
         },
         "cost": cost.summary(units=len(cases)),
         "cases": rows,

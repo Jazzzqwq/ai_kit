@@ -152,6 +152,22 @@ def _md(report: Dict[str, Any]) -> str:
             if not h.get("use_llm") and not l4.get("count"):
                 lines.append("")
                 lines.append("> L4 只有 `--llm` 注入 LLM 才会产生候选, 离线模式恒为 0 —— 这一行是口径限制, 不是策略退化。")
+            st = h.get("stability") or {}
+            if st.get("n"):
+                det = (_pct(st["determinism_rate"]) if st.get("repeat_tested") else "n/a (未重复调用)")
+                lines.append(f"- **自愈稳定性**: 重复调用候选序列一致 {det} "
+                             f"({st.get('repeat_same', 0)}/{st.get('repeat_tested', 0)} 条) | "
+                             f"命中冗余 {_pct(st.get('redundancy_rate'))} "
+                             f"({st.get('redundant', 0)}/{st['n']} 条有 ≥2 个候选落到同一元素) | "
+                             f"排名稳固 {_pct(st.get('rank_stability'))} "
+                             f"(top1 {st.get('top1', 0)} / top3 {st.get('top3', 0)})")
+                if st.get("fragile_cases"):
+                    lines.append(f"  - 只有单一命中的 case (排头那个失效就没下一手): "
+                                 f"{', '.join(st['fragile_cases'][:8])}")
+                lines.append("  > 口径: 一致性 = 同夹具同入参连跑两次候选序列逐字节相等 (注入 LLM 的"
+                             "条目不重复跑, 否则一次评测翻倍花钱, 分母里不算它们); 冗余度 = 命中候选"
+                             ">=2 的 case 占比; 排名稳固 = top1 命中 / top3 命中。规则层确定性是回归护栏,"
+                             "不是能力上限。")
             lines.append("")
             lines.append("<details><summary>每条 case 明细</summary>\n")
             for c in h["cases"]:
@@ -240,13 +256,27 @@ def _md(report: Dict[str, Any]) -> str:
                              f"{ec.get('n_pages', 0)} 页汇总)")
             if ch.get("n_errors"):
                 lines.append(f"- ⚠ 其中 {ch['n_errors']} 条链路跑报错, 计入分母但不计入分子 (见 JSON 的 cases[].chain)")
+            gn = ch.get("generalization") or {}
+            if gn.get("n_pages"):
+                gc = gn.get("coverage") or {}
+                lines.append(f"- **跨页泛化**: {gn['n_pages']} 页 / {gn.get('n_archetypes', 0)} 种原型 | "
+                             f"短板页覆盖率 **{_pct(gc.get('min'))}** (中位 {_pct(gc.get('median'))} / "
+                             f"最高 {_pct(gc.get('max'))}) | 覆盖率低于一半的页 {gn.get('below_half_pages', 0)}")
+                if gn.get("zero_case_pages"):
+                    lines.append(f"  - ⚠ 一页都没派生用例: {', '.join(gn['zero_case_pages'])}")
+                arch_bits = [f"{name} {x['pages']}页/{_pct(x['rate'])}"
+                             for name, x in (gn.get("by_archetype") or {}).items()]
+                if arch_bits:
+                    lines.append(f"  - 按原型: {' | '.join(arch_bits)}")
             lines.append("> 口径: eid 解析率 = plan 里全部非空 step.eid (含 cleanup/复合引用) 能在采集清单里"
                          " resolve_ref 到的比例; 可执行率 = render 出码且 verify 后未标 needs_review 的比例。"
                          "确定性规划器无幻觉, 离线模式解析率预期接近 100%, 真正能打破它的是 --llm 引用幻觉;"
                          "活页面层离线无 driver 时跳过 (live_skipped), 不影响这两项读数。"
                          "元素覆盖率分母是 inventory 的可交互元素 (表格/弹窗/图表走 lookup 不在内),"
                          " 复合引用 (c1.column:X) 不计入分子; 它与覆盖率(召回)不是同一把尺子 ——"
-                         " 那个按计划文本里的预期关键词算, 计划只用 eid 引用时天然偏低。")
+                         " 那个按计划文本里的预期关键词算, 计划只用 eid 引用时天然偏低。"
+                         "跨页泛化看短板不看均值: 7 页好、1 页空, 均值照样 87%, 但上线就瞎在那 1 页;"
+                         "所以主指标取最差页覆盖率, 并按原型分桶看规则是不是只对某类页面有效。")
         else:
             lines.append("- 感知链实跑: n/a (黄金集里没有带 inventory 的采集冻结样本, 不是 0%)")
         lines.append("")

@@ -13,11 +13,14 @@
 - duplication_rate                  : 生成用例重复率 (方法名碰撞 + 步骤 Jaccard 近重复)
 - proposal_decision_metrics         : 方案层人决策账本 → 接受率 / 验证成功率 (按类型分列)
 - perception_chain_metrics          : 感知链两项实跑率 → eid 解析率 / 可执行率
+- cross_page_generalization         : 跨页泛化 → 同一套规则在 N 页上的短板覆盖率
+- healing_stability                 : 自愈稳定性 → 重复调用答案漂不漂 + 命中冗余度
 """
 from __future__ import annotations
 
 import ast
 import re
+import statistics
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 
@@ -321,6 +324,108 @@ def element_coverage(inventory_eids: Sequence[str],
         "covered": len(covered),
         "rate": round(safe_div(len(covered), len(total_eids)), 4),
         "missing": missing[:10],   # 只留样例, 不在报告里塞整页清单
+    }
+
+
+# ---------------------------------------------------------------------------
+# 跨页泛化: 同一套规则在不同页面上还剩多少产出
+# ---------------------------------------------------------------------------
+
+def cross_page_generalization(page_rows: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    """跨页泛化 —— 一套规则放到 N 页上, 短板页还剩多少
+
+    page_rows 每条形如 {id, archetype, covered, total, n_cases}: covered/total 是该页
+    被用例引用到的交互元素 / 全部交互元素, n_cases 是该页派生出的用例数。
+
+    为什么不报"平均覆盖率": 8 页里 7 页很好、1 页全空, 均值照样 87%, 可上线那次
+    就瞎在那 1 页上。所以主指标取 min (最差页), 另给中位数与"低于一半的页数"。
+
+    派生不出用例 (n_cases=0) 比覆盖率低更严重: 说明规则在那类页上没有结论, 该页
+    覆盖率按 0 计并计入 zero_case_pages —— 分母进得去, 分子不白送。
+    任一项缺失 (链路报错) 的页也计入分母、按 0 计, 同时点名, 不静默丢弃。
+    """
+    rows = list(page_rows)
+    if not rows:
+        return {"n_pages": 0, "n_archetypes": 0, "archetypes": [],
+                "coverage": {"min": 0.0, "median": 0.0, "max": 0.0, "mean": 0.0},
+                "below_half_pages": 0, "zero_case_pages": [], "by_archetype": {}}
+
+    def _rate(row: Mapping[str, Any]) -> float:
+        if not int(row.get("n_cases") or 0):
+            return 0.0                      # 没派生用例 = 这页没被规则覆盖到
+        return safe_div(float(row.get("covered") or 0), float(row.get("total") or 0))
+
+    rates = [_rate(r) for r in rows]
+    zero_case = [str(r.get("id") or "?") for r in rows if not int(r.get("n_cases") or 0)]
+
+    buckets: Dict[str, List[Mapping[str, Any]]] = {}
+    for row in rows:
+        buckets.setdefault(str(row.get("archetype") or "unknown"), []).append(row)
+    by_archetype: Dict[str, Dict[str, Any]] = {}
+    for arch, items in sorted(buckets.items()):
+        covered = sum(int(r.get("covered") or 0) for r in items)
+        total = sum(int(r.get("total") or 0) for r in items)
+        by_archetype[arch] = {
+            "pages": len(items),
+            "covered": covered,
+            "total": total,
+            "rate": round(safe_div(covered, total), 4),
+            "zero_case": sum(1 for r in items if not int(r.get("n_cases") or 0)),
+        }
+
+    return {
+        "n_pages": len(rows),
+        "n_archetypes": len(by_archetype),
+        "archetypes": sorted(by_archetype),
+        "coverage": {
+            "min": round(min(rates), 4),
+            "median": round(statistics.median(rates), 4),
+            "max": round(max(rates), 4),
+            "mean": round(safe_div(sum(rates), len(rates)), 4),
+        },
+        "below_half_pages": sum(1 for r in rates if r < 0.5),
+        "zero_case_pages": zero_case,
+        "by_archetype": by_archetype,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 自愈稳定性: 反复问同一个问题, 答案会不会漂
+# ---------------------------------------------------------------------------
+
+def healing_stability(rows: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    """自愈稳定性 —— 同一种失效重复问, 候选序列漂不漂
+
+    rows 每条形如 {id, repeat_same, n_hits, top1_hit, top3_hit}:
+    - repeat_same: 同一夹具同一入参连跑两次, 候选序列 (by + locator, 含顺序) 是否
+      完全一致; None = 没测 (注入了 LLM 的条目不重复跑, 否则一次评测翻倍花钱);
+    - n_hits: 有多个候选真落到期望元素 —— >=2 说明排头那个失效时还有下一手。
+
+    三项率 (口径写死在这里, 报告照搬):
+    - determinism_rate = repeat_same 为 True / 真测过的条数 (None 不进分母);
+    - redundancy_rate  = n_hits >= 2 / 全部条数;
+    - rank_stability   = top1 命中 / top3 命中 —— 命中了但总排第二, 说明排序不稳,
+      换个页面版本就可能掉出 top1; top3 为 0 时记 0.0 (没有命中就谈不上排序)。
+    """
+    n = len(rows)
+    tested = [r for r in rows if r.get("repeat_same") is not None]
+    same = sum(1 for r in tested if r.get("repeat_same"))
+    redundant = sum(1 for r in rows if int(r.get("n_hits") or 0) >= 2)
+    top1 = sum(1 for r in rows if r.get("top1_hit"))
+    top3 = sum(1 for r in rows if r.get("top3_hit"))
+    fragile = [str(r.get("id") or "?") for r in rows
+               if r.get("top1_hit") and int(r.get("n_hits") or 0) < 2]
+    return {
+        "n": n,
+        "repeat_tested": len(tested),
+        "repeat_same": same,
+        "determinism_rate": round(safe_div(same, len(tested)), 4),
+        "redundant": redundant,
+        "redundancy_rate": round(safe_div(redundant, n), 4),
+        "top1": top1,
+        "top3": top3,
+        "rank_stability": round(safe_div(top1, top3), 4),
+        "fragile_cases": fragile,
     }
 
 
