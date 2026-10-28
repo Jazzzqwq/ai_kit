@@ -248,6 +248,29 @@ def _proposal_of(payload: Mapping[str, Any],
     return None
 
 
+def decision_type_index(reports_target: Any) -> Dict[Tuple[str, str], str]:
+    """(failure_id, proposal_id) -> 方案类型。
+
+    账本七个键里没有 type, 而方案层评测要"按类型分列" —— 唯一诚实的来源是 join
+    report.json (proposal.type 是方案生成时定死的), 而不是从 note 里猜。报告不存在时
+    返回空表, 调用方自己把该条归 unknown。与建正/负样本走同一张 read_reports。
+    """
+    index: Dict[Tuple[str, str], str] = {}
+    try:
+        reports = read_reports(reports_target)
+    except FlywheelError:
+        return index
+    for failure_id, payload in reports.items():
+        for raw in payload.get("proposals") or ():
+            if not isinstance(raw, dict):
+                continue
+            pid = str(raw.get("proposal_id") or "").strip()
+            kind = str(raw.get("type") or "").strip()
+            if pid and kind:
+                index[(failure_id, pid)] = kind
+    return index
+
+
 # ---------------------------------------------------------------------------
 # 拼: 一条决策该变成什么
 # ---------------------------------------------------------------------------

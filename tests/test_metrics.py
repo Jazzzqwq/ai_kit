@@ -91,6 +91,45 @@ def test_jaccard_and_dup():
     assert dup["name_collision"]["collision_rate"] == 0.5
 
 
+def test_proposal_decision_metrics_overall():
+    """接受率 = accept/(accept+reject), defer 不进分母; 验证成功率 = 采纳且 passed / 采纳数"""
+    rows = [
+        {"type": "locator_patch", "decision": "accept", "verify_result": "passed"},
+        {"type": "locator_patch", "decision": "accept", "verify_result": "failed"},
+        {"type": "locator_patch", "decision": "reject", "verify_result": "skipped"},
+        {"type": "wait_adjust", "decision": "defer", "verify_result": "skipped"},
+    ]
+    r = m.proposal_decision_metrics(rows)
+    assert r["n"] == 4
+    o = r["overall"]
+    assert o["decided"] == 3 and o["accepted"] == 2 and o["rejected"] == 1
+    assert o["deferred"] == 1 and o["verified"] == 1
+    assert _close(o["acceptance_rate"], 2 / 3), o
+    assert _close(o["verify_success_rate"], 1 / 2), o
+
+
+def test_proposal_decision_metrics_by_type_and_unknown():
+    """按类型分列; type 缺失归 unknown 桶, 不编类型"""
+    rows = [
+        {"type": "data_fix", "decision": "accept", "verify_result": "passed"},
+        {"type": "", "decision": "reject", "verify_result": "skipped"},
+    ]
+    r = m.proposal_decision_metrics(rows)
+    assert set(r["by_type"]) == {"data_fix", "unknown"}, r["by_type"]
+    assert r["by_type"]["data_fix"]["acceptance_rate"] == 1.0
+    assert r["by_type"]["unknown"]["rejected"] == 1
+
+
+def test_proposal_decision_metrics_empty_denominators():
+    """一条都没采纳 (accepted=0) 或全 defer (decided=0): 率为 0.0, 由渲染层显 n/a"""
+    r = m.proposal_decision_metrics(
+        [{"type": "env_issue", "decision": "defer", "verify_result": "skipped"}])
+    assert r["overall"]["decided"] == 0
+    assert r["overall"]["acceptance_rate"] == 0.0
+    assert r["overall"]["verify_success_rate"] == 0.0
+    assert m.proposal_decision_metrics([])["n"] == 0
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

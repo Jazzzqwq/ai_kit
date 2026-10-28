@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-AI 评测统一入口 — 汇总三套件, 输出 Markdown + JSON 报告
+AI 评测统一入口 — 汇总三套件 + 方案层人决策账本, 输出 Markdown + JSON 报告
 
 用法:
     python -m ai_kit.evaluation.run_eval                       # 默认: 0成本/离线/确定性
@@ -8,6 +8,7 @@ AI 评测统一入口 — 汇总三套件, 输出 Markdown + JSON 报告
     python -m ai_kit.evaluation.run_eval --smoke               # --llm 冒烟: 各 1 条, 验 usage/成本
     python -m ai_kit.evaluation.run_eval --suite healer,analyzer
     python -m ai_kit.evaluation.run_eval --out ai_evaluation_report.md
+    python -m ai_kit.evaluation.run_eval --decisions decisions.jsonl   # 账本位置 (默认 cwd)
 
 可移植: 全程不 import 项目的 pages/config/common; 只依赖 ai_kit.* + selenium。
 """
@@ -21,7 +22,7 @@ import time
 from typing import Any, Dict, List
 
 from ai_kit.evaluation import driver_provider
-from ai_kit.evaluation import eval_healer, eval_analyzer, eval_generator
+from ai_kit.evaluation import eval_healer, eval_analyzer, eval_generator, eval_proposal
 
 # 报告默认落到当前工作目录 (独立包不能写自身目录); 可用 AI_KIT_REPORT_DIR 覆盖
 _OUT_DIR = os.environ.get("AI_KIT_REPORT_DIR") or os.getcwd()
@@ -29,7 +30,8 @@ _SUITES = {"healer": eval_healer, "analyzer": eval_analyzer, "generator": eval_g
 
 
 def run(use_llm: bool = False, suites: List[str] = None,
-        include_flywheel: bool = True, limit: int = 0) -> Dict[str, Any]:
+        include_flywheel: bool = True, limit: int = 0,
+        decisions: str = "", reports: str = "") -> Dict[str, Any]:
     suites = suites or ["healer", "analyzer", "generator"]
     limit = int(limit or 0)
 
@@ -37,21 +39,21 @@ def run(use_llm: bool = False, suites: List[str] = None,
     need_driver = ("healer" in suites) or (use_llm and "analyzer" in suites)
     driver = driver_provider.get_driver() if need_driver else None
 
-    reports: Dict[str, Any] = {}
+    reports_rows: Dict[str, Any] = {}
     try:
         for name in suites:
             mod = _SUITES.get(name)
             if not mod:
-                reports[name] = {"suite": name, "status": "UNKNOWN"}
+                reports_rows[name] = {"suite": name, "status": "UNKNOWN"}
                 continue
             if name == "generator":
-                reports[name] = mod.run(use_llm=use_llm, limit=limit or None)
+                reports_rows[name] = mod.run(use_llm=use_llm, limit=limit or None)
             elif name == "analyzer":
-                reports[name] = mod.run(use_llm=use_llm, driver=driver,
-                                        include_flywheel=include_flywheel,
-                                        limit=limit or None)
+                reports_rows[name] = mod.run(use_llm=use_llm, driver=driver,
+                                            include_flywheel=include_flywheel,
+                                            limit=limit or None)
             else:  # healer
-                reports[name] = mod.run(use_llm=use_llm, driver=driver)
+                reports_rows[name] = mod.run(use_llm=use_llm, driver=driver)
     finally:
         driver_provider.quit_driver(driver)
 
@@ -64,8 +66,11 @@ def run(use_llm: bool = False, suites: List[str] = None,
             "include_flywheel": include_flywheel,
             "limit": limit,
         },
-        "reports": reports,
+        "reports": reports_rows,
     }
+    # 方案层人决策指标 (套件4): 读本地账本 decisions.jsonl, 不碰浏览器不花钱;
+    # 没账本就在报告里 SKIPPED, 不编数字。
+    result["proposal"] = eval_proposal.run(decisions=decisions, reports=reports or None)
     if limit and use_llm and set(suites) <= {"analyzer", "generator"}:
         # 只有 "真的调到了 + usage 采到了 + 价目表认识这个型号" 三条都过才算冒烟成功
         result["smoke"] = smoke_check(result)
@@ -222,8 +227,38 @@ def _md(report: Dict[str, Any]) -> str:
                      f"每页成本: {g['cost'].get('per_page', 'n/a')} 元/页 (共 {g.get('n_pages', g['n'])} 页)")
         lines.append("")
 
+    # ---- 方案层人决策 (套件4): 本地账本, 有就报没有就 SKIPPED ----
+    p = report.get("proposal")
+    if p:
+        lines.append("## 4. 方案层人决策 (接受率 / 验证成功率, 按方案类型分列)")
+        if p.get("status") == "SKIPPED":
+            lines.append(f"- ⚠ SKIPPED: {p.get('reason')}")
+        else:
+            lines.append(f"- 账本: {p['decisions']} ({p['n_rows']} 条, 本地文件不进 git) | "
+                         f"类型 join: 认出 {p['n_type_resolved']} / unknown {p['n_type_unknown']}")
+            lines.append("")
+            lines.append("| 方案类型 | 已决定 | 采纳 | 拒绝 | 挂起 | 接受率 | 验证成功率 |")
+            lines.append("|---------|-------|------|------|------|--------|-----------|")
+            for kind, b in p["by_type"].items():
+                acc = _pct(b["acceptance_rate"]) if b["decided"] else "n/a"
+                vsr = _pct(b["verify_success_rate"]) if b["accepted"] else "n/a"
+                lines.append(f"| {kind} | {b['decided']} | {b['accepted']} | "
+                             f"{b['rejected']} | {b['deferred']} | {acc} | {vsr} |")
+            o = p["overall"]
+            acc = _pct(o["acceptance_rate"]) if o["decided"] else "n/a"
+            vsr = _pct(o["verify_success_rate"]) if o["accepted"] else "n/a"
+            lines.append(f"| **总体** | {o['decided']} | {o['accepted']} | "
+                         f"{o['rejected']} | {o['deferred']} | **{acc}** | **{vsr}** |")
+            lines.append("")
+            lines.append("> 口径: 接受率 = accept/(accept+reject), defer 未决定不进分母; "
+                         "验证成功率 = 采纳且重跑验证通过/采纳数, 一条都没采纳时是 n/a 不是 0%。")
+            if p["n_type_unknown"]:
+                lines.append("> 账本七个键里没有类型, 类型靠 join report.json 补; "
+                             "没留档报告的条目全部落在 unknown 桶 —— 不是编的类型。")
+        lines.append("")
+
     # ---- 成本汇总 ----
-    lines.append("## 4. 成本汇总 (token × 价目表)")
+    lines.append("## 5. 成本汇总 (token × 价目表)")
     lines.append("")
     if meta["use_llm"]:
         lines.append("| 套件 | 样本 n | LLM 调用 | 输入 tokens | 输出 tokens | 总成本(元) | 单次(元) | 每页(元) |")
@@ -249,7 +284,7 @@ def _md(report: Dict[str, Any]) -> str:
     # ---- 冒烟 (--smoke) ----
     smoke = report.get("smoke")
     if smoke:
-        lines.append("## 5. `--llm` 冒烟 (usage 采集 + 成本换算)")
+        lines.append("## 6. `--llm` 冒烟 (usage 采集 + 成本换算)")
         lines.append("")
         lines.append("| 套件 | LLM 调用 | 输入 tokens | 输出 tokens | 单次(元) | 价目表 | 结论 |")
         lines.append("|------|---------|------------|------------|---------|--------|------|")
@@ -275,6 +310,10 @@ def main():
                         help="不并入数据飞轮正样本 (退回手写黄金集基线, 便于对比)")
     parser.add_argument("--smoke", action="store_true",
                         help="--llm 冒烟: analyzer/generator 各跑 1 条, 验 usage 采集与成本换算")
+    parser.add_argument("--decisions", default="",
+                        help="方案层账本位置 (默认当前目录 decisions.jsonl)")
+    parser.add_argument("--reports", default="",
+                        help="类型 join 用的 report.json 位置 (默认当前目录)")
     parser.add_argument("--out", default=os.path.join(_OUT_DIR, "ai_evaluation_report.md"))
     parser.add_argument("--json", default=os.path.join(_OUT_DIR, "ai_evaluation_report.json"))
     args = parser.parse_args()
@@ -291,7 +330,8 @@ def main():
         suites = [s.strip() for s in args.suite.split(",") if s.strip()]
         use_llm, limit = args.llm, 0
     report = run(use_llm=use_llm, suites=suites, limit=limit,
-                 include_flywheel=not args.no_flywheel)
+                 include_flywheel=not args.no_flywheel,
+                 decisions=args.decisions, reports=args.reports)
 
     with open(args.json, "w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False, indent=2, default=str)

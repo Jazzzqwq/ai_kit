@@ -11,6 +11,7 @@
 - py_compile_pass                   : 生成代码语法编译通过率
 - coverage_recall                   : 生成用例对"应覆盖场景"的召回率
 - duplication_rate                  : 生成用例重复率 (方法名碰撞 + 步骤 Jaccard 近重复)
+- proposal_decision_metrics         : 方案层人决策账本 → 接受率 / 验证成功率 (按类型分列)
 """
 from __future__ import annotations
 
@@ -194,6 +195,69 @@ def confidence_gap(samples: Sequence[Tuple[float, bool]],
         "n": n,
         "verdict": verdict,
         "band": band,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 方案层人决策: 接受率 / 验证成功率 (按方案类型分列)
+# ---------------------------------------------------------------------------
+
+# 账本三值与验证结果口径 (与 applier 的 schema 对齐; 纯函数不 import 它, 只认字符串)
+_ACCEPT = "accept"
+_REJECT = "reject"
+_DEFER = "defer"
+_PASSED = "passed"
+
+
+def _decision_bucket(rows: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    """一组同类型决策 -> 计数 + 两项率 (接受率 / 验证成功率)"""
+    decided = accepted = rejected = deferred = verified = 0
+    for row in rows:
+        decision = str(row.get("decision") or "").strip().lower()
+        verify = str(row.get("verify_result") or "").strip().lower()
+        if decision == _DEFER:
+            deferred += 1
+            continue
+        if decision in (_ACCEPT, _REJECT):
+            decided += 1
+        if decision == _ACCEPT:
+            accepted += 1
+            if verify == _PASSED:
+                verified += 1
+        elif decision == _REJECT:
+            rejected += 1
+    return {
+        "n": len(rows),
+        "decided": decided,          # accept + reject (defer 还没决定, 不进分母)
+        "accepted": accepted,
+        "rejected": rejected,
+        "deferred": deferred,
+        "verified": verified,        # accept 且重跑验证通过
+        "acceptance_rate": round(safe_div(accepted, decided), 4),
+        # 只有 accept 才会跑验证: 一条都没采纳时这个率没有意义, 交给调用方按 accepted==0 显示 n/a
+        "verify_success_rate": round(safe_div(verified, accepted), 4),
+    }
+
+
+def proposal_decision_metrics(rows: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    """方案层账本 -> 接受率 / 验证成功率, 总体一份 + 按方案类型各一份。
+
+    rows 每条形如 {type, decision, verify_result} —— type 由调用方 join report.json 补上
+    (账本七个键里没有 type, 见 applier); 补不到时传空串, 这里归到 "unknown" 桶, 不编类型。
+
+    两项率的口径 (写死在这里, 报告照搬):
+    - acceptance_rate   = accept / (accept + reject)   —— defer 未决定, 不进分母;
+    - verify_success_rate = (accept 且 verify=passed) / accept —— 只有采纳了才会重跑验证。
+    分母为 0 的率一律 0.0, 由调用方结合 accepted/decided 计数决定是显 0% 还是 n/a。
+    """
+    buckets: Dict[str, List[Mapping[str, Any]]] = {}
+    for row in rows:
+        kind = str(row.get("type") or "").strip() or "unknown"
+        buckets.setdefault(kind, []).append(row)
+    return {
+        "n": len(rows),
+        "overall": _decision_bucket(list(rows)),
+        "by_type": {kind: _decision_bucket(items) for kind, items in sorted(buckets.items())},
     }
 
 

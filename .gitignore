@@ -33,3 +33,7 @@ plans/
 runs.jsonl
 artifacts/
 generated/
+# 方案层人决策账本: 本地真数据, 绝不进 git (接受率/验证成功率的隐私源)
+decisions.jsonl
+decisions*.jsonl
+patches/
