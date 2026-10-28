@@ -59,6 +59,9 @@ pytest tests/test_metrics.py tests/test_golden.py tests/test_eval_report.py
 
 **CI（`.github/workflows/eval.yml`）**：`windows-latest`（自带 Edge，selenium-manager 自动下驱动 → healer 真跑）+ 每周一 cron + 改动 push；跑完把报告 **commit 回仓库**，git 历史就是指标趋势看板。报告文件默认在 `.gitignore` 里（本地跑评测不打脏工作区），CI 用 `git add -f` 强制入库；配了 `QIANWEN_API_KEY` secret 才跑冒烟，没配自动跳过。
 
+> 该 workflow 是 GitHub Actions 语法，仓库现托管 Gitee，不会自动执行；Gitee 上的等价做法是本地手动跑
+> `python -m ai_kit.evaluation.run_eval`（含 `--llm --smoke`），或后续接 Gitee Go。
+
 > Windows 控制台若中文乱码，用 `python -X utf8 -m ai_kit.evaluation.run_eval`。落盘文件始终为 UTF-8。
 
 ## 指标总表 (7.1)

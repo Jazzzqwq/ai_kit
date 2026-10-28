@@ -1,6 +1,6 @@
 # ai_kit
 
-![AI 评测周更](https://github.com/Twinkle-qwq/ai_kit/actions/workflows/eval.yml/badge.svg?branch=master)
+仓库：<https://gitee.com/twinkleqwq/ai_kit>　|　CI 配置 `.github/workflows/eval.yml` 为 GitHub Actions 语法，Gitee 不执行（见 ROADMAP 第 5 条）
 
 ## 30 秒开场
 
@@ -20,7 +20,7 @@ Python `>=3.9`，版本 `0.1.0`。默认 0 成本跑规则层，加 `--llm` 才�
 | 定位器一改就崩，靠人肉 F12 猜 | `healer` 四层自愈：L1 规则映射 → L2 多语义 CSS → L3 相对 XPath → L4 LLM 兜底；黄金集实测 top-1 87.5% / top-3 100%（n=24） |
 | 挂了说不清是谁的锅 | `analyzer` 六分类归因（5 类规则可判 + 未知兜底），实测严格 96.7% / 含容错 100%（n=30）；`proposal` 把结论投影成 4 路 blame 与修复方案 |
 | 用例一条条手写 | `perception` 采集 DOM → 元素清单 → 页面原型 → 策略 → 用例计划 → 渲染 pytest；`generator` 两步法补业务断言 |
-| "AI 生成得好不好"没有度量 | `evaluation` 黄金集 + 指标纯函数 + 成本台账，`run_eval` 一条命令出 md/json 报告，CI 周更提交回仓库 |
+| "AI 生成得好不好"没有度量 | `evaluation` 黄金集 + 指标纯函数 + 成本台账，`run_eval` 一条命令出 md/json 报告，接上 CI 即可周更提交回仓库 |
 
 ## 架构
 
@@ -85,8 +85,9 @@ schema 这一关，才允许变代码。
 统一 schema，规模底线有硬断言，CLI 样本不够直接退出码 1），指标全是纯函数（top-k /
 分层占比 / ECE / 可靠性表 / 编译通过率 / 重复率 / 感知链 eid 解析率与可执行率）。
 成本从响应 `usage` 回填，按 model 查价目表换算元。
-`run_eval` 一条命令出三套件合并报告；CI 每周一跑完把报告 commit 回仓库，git 历史
-就是指标趋势看板。账本里被采纳的修复反哺黄金集（数据飞轮），评测集随使用增长。
+`run_eval` 一条命令出三套件合并报告；CI 设计每周一跑完把报告 commit 回仓库，git 历史
+就是指标趋势看板 —— 仓库现托管 Gitee，该 workflow 不会自动执行，当前靠本地手动跑。
+账本里被采纳的修复反哺黄金集（数据飞轮），评测集随使用增长。
 除三套件外还有**套件4 方案层人决策**（`eval_proposal`）：直接读本地 `decisions.jsonl` 账本
 算接受率（accept/(accept+reject)，defer 不进分母）与验证成功率（采纳且重跑通过/采纳数），
 按方案类型分列 —— 类型不在账本七个键里，靠 join `report.json` 补，join 不上就落 unknown
@@ -158,9 +159,10 @@ schema 这一关，才允许变代码。
 
 口径说明：`--smoke` 下 analyzer **强制走 Phase 2**（`eval_analyzer._eval_mode(force_llm=True)`），
 否则黄金集第一条被规则 0.9 高分命中、生产升级门槛挡住，`llm_calls` 恒为 0，冒烟会把
-"通路是好的"误报成"通路坏了"；LLM 挂了仍降级回规则。CI（`.github/workflows/eval.yml`）
-的 `workflow_dispatch` 可手动触发，"LLM 冒烟"步骤 `if: env.QIANWEN_API_KEY != ''` ——
-secret 没配就整步 skip，不算失败。
+"通路是好的"误报成"通路坏了"；LLM 挂了仍降级回规则。CI 配置（`.github/workflows/eval.yml`）
+是 GitHub Actions 语法：`workflow_dispatch` 手动触发、冒烟步骤 `if: env.QIANWEN_API_KEY != ''`
+（secret 没配就整步 skip 不算失败）。仓库在 Gitee，Actions ≠ Gitee Go，这条流水线不会自动跑；
+等价本地命令：`python -m ai_kit.evaluation.run_eval --llm --smoke`。
 
 </details>
 
@@ -242,8 +244,10 @@ CI 默认路径 0 成本；报告数字与代码口径冲突时以重跑为准�
 4. **perception 真检出 P/R**（元素该采到的采到了几成 / 采到的里有几成是真的）—— 需要人工
    标注每页元素真值，采集一张页就要标一张，成本高；本期只上了解析率/可执行率这两个
    无需真值的链路率，**P/R 没做，不装做能做**；
-5. **CI 真实触发验证 + 全量 `--llm` 评测** —— 本仓库当前尚未配 git remote，push 到 GitHub 后
-   从 Actions 页 `Run workflow` 实触发一次冒烟；全量 `--llm`（30+24 条真调）花钱多，没顺手跑。
+5. **CI 真实触发验证 + 全量 `--llm` 评测** —— 仓库现托管 Gitee（`gitee.com/twinkleqwq/ai_kit`），
+   `.github/workflows/eval.yml` 不会被 Gitee 执行；要自动周更需接 Gitee Go（或回 GitHub）。
+   当前 CI 等价物是本地手动跑 `run_eval --llm --smoke`（已实测通过）；全量 `--llm`
+   （30+24 条真调）花钱多，没顺手跑。
 
 ## 许可证
 
