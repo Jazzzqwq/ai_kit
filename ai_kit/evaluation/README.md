@@ -2,6 +2,8 @@
 
 把 README 里的**估算数字**（自愈命中率 30/50/10/10、置信度 0.80 vs 0.97）变成**可复现的实测指标**。
 
+> 安装、虚拟环境、`.env` 配置见主 `README.md` 的「从零跑起来」一节；本文件只讲评测本身。
+
 ## 设计前提：可移植、自包含
 本模块已随 `ai_kit` 独立成包、可用于任意网站，因此：
 - 只依赖 `ai_kit.*` 公开函数 + stdlib + selenium + requests，**不 import** 项目的 `pages/`、`config.py`、`common/`。
@@ -62,7 +64,8 @@ pytest tests/test_metrics.py tests/test_golden.py tests/test_eval_report.py
 > 该 workflow 是 GitHub Actions 语法，仓库现托管 Gitee，不会自动执行；Gitee 上的等价做法是本地手动跑
 > `python -m ai_kit.evaluation.run_eval`（含 `--llm --smoke`），或后续接 Gitee Go。
 
-> Windows 控制台若中文乱码，用 `python -X utf8 -m ai_kit.evaluation.run_eval`。落盘文件始终为 UTF-8。
+> Windows 控制台若中文乱码或报 `UnicodeEncodeError`（GBK 编不了 `≥`/`→`），先 `chcp 65001` 切 UTF-8 代码页，
+> 或加 `-X utf8`（`python -X utf8 -m ai_kit.evaluation.run_eval`）避免崩溃。落盘文件始终为 UTF-8。
 
 ## 指标总表 (7.1)
 “状态”只有两种：✅ 真跑在报告里；— 还没做（写进表里是为了不假装覆盖）。

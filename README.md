@@ -169,13 +169,104 @@ schema 这一关，才允许变代码。
 
 </details>
 
+## 从零跑起来
+
+前置只有两样：**Python ≥3.9**（本机 3.12.0 实测）和一个浏览器（Edge 或 Chrome，自愈评测要用）。
+不需要数据库、不需要 Docker；不配 key 也能跑离线评测和全量测试。
+
+**1. 拿代码，建虚拟环境**
+
+```powershell
+git clone https://gitee.com/twinkleqwq/ai_kit.git
+cd ai_kit
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+```
+
+```bash
+# macOS / Linux
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+> PowerShell 提示 `无法加载文件 ...Activate.ps1，因为在此系统上禁止运行脚本`：
+> 先执行 `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`（只对当前窗口生效），再激活。
+
+**2. 装依赖**
+
+```powershell
+pip install -e ".[test]"
+```
+
+`-e` 是可编辑安装（改代码立刻生效，不用重装），`[test]` 额外装 `pytest` 与 `allure-pytest`；
+只要运行不要测试就 `pip install -e .`。第三方依赖只有 `selenium` 和 `requests` 两家。
+
+**3. 配 LLM（可选）** —— 只有真跑 `--llm`（花钱的那条）才需要，离线评测、黄金集体检、全量测试都不需要。
+
+```powershell
+Copy-Item .env.example .env
+```
+
+把 `QIANWEN_API_KEY=` 后面填上自己的 key；换别家改 `AI_ACTIVE_PROVIDER`（deepseek / doubao / ollama，
+ollama 是本地服务、不用 key）。`.env` 已被 `.gitignore` 忽略，不会进仓库；`ai_kit.config` 启动时
+自动加载它（查找顺序 `AI_KIT_ENV_FILE` → 当前目录 `.env` → 仓库根 `.env`，不覆盖已存在的环境变量），
+**不用手动 export**。
+
+自检（打印配置，key 只显掩码 `sk-ab****yz`，不联网）：
+
+```powershell
+python -m ai_kit.config          # provider / model / 单价 / .env 有没有被找到
+python -m ai_kit.config --ping   # 真调一次验连通性，消耗极少 token
+```
+
+**4. 验证装对了**
+
+```powershell
+python -m pytest -q                    # 全量回归，当前 1127 passed
+python -m ai_kit.evaluation.golden     # 黄金集体检，期望三行 OK + schema 0 个问题
+python -m ai_kit.evaluation.run_eval   # 离线评测，约 6 秒，0 成本
+```
+
+黄金集体检的预期输出：
+
+```
+analyzer   n=30  底线 30  OK
+healer     n=24  底线 20  OK
+generator  n=10  底线 8   OK
+
+schema: 0 个问题
+```
+
+`run_eval` 把 `ai_evaluation_report.md` / `.json` 写到**当前目录**（已被 `.gitignore` 忽略），
+离线模式开头应是：
+
+```
+- 模式: 离线规则/骨架 (0 成本, 默认)
+- 浏览器可用: True
+```
+
+`浏览器可用: False` 不是装错：本机 Edge/Chrome 都没拉起来，自愈套件会标 `SKIPPED` 而不是失败，
+装上任一浏览器即可；Selenium 4.10+ 自带 selenium-manager 自动匹配驱动，**不用手装 chromedriver**。
+
+**常见问题**
+
+| 现象 | 原因与处理 |
+| --- | --- |
+| 控制台中文乱码，或报 `UnicodeEncodeError: 'gbk' codec can't encode` | 终端与 Python 两侧编码不一致。Windows 上先 `chcp 65001` 切 UTF-8 代码页，再设 `$env:PYTHONUTF8=1`；或直接用 Windows Terminal / PowerShell 7（默认 UTF-8） |
+| `python` 不是内部或外部命令，或敲 `python` 弹出应用商店 | 用 `py -3`（官方启动器，一般随安装就有）；虚拟环境激活后 `python` 一定指向 `.venv\Scripts\python.exe` |
+| `pip install -e ".[test]"` 报 extras 不认识 | 必须在仓库根（有 `pyproject.toml`），PowerShell 里引号不能省 |
+| `No module named ai_kit` | 没装或没激活虚拟环境，回第 1、2 步 |
+| healer 显示 SKIPPED | 没起得来浏览器，见上一条；不影响 analyzer / generator |
+
 ## 三条命令
 
 ```bash
-pip install -e ".[test]" && python -m pytest -q          # 全量回归（Windows 先设 PYTHONUTF8=1）
+python -m pytest -q                                       # 全量回归（中文乱码就加 -X utf8）
 python -m ai_kit.evaluation.golden                        # 黄金集规模体检，样本不够退出码 1
 python -m ai_kit.evaluation.run_eval                      # 离线评测出报告；加 --llm 全量约 0.029 元
 ```
+
+装依赖见上一节第 2 步。PowerShell 5 不支持 `&&`，别把两条命令拼成一行（用 `;` 或直接分两行）。
 
 真实归因/自愈需要 provider 配置：`AI_ACTIVE_PROVIDER` + 对应 `*_API_KEY`（见 `.env.example`），
 密钥只走环境变量、不落盘、不进提示词。
