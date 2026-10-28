@@ -1,6 +1,6 @@
 # ai_kit
 
-仓库：<https://gitee.com/twinkleqwq/ai_kit>　|　CI 配置 `.github/workflows/eval.yml` 为 GitHub Actions 语法，Gitee 不执行（见 ROADMAP 第 5 条）
+仓库：<https://gitee.com/twinkleqwq/ai_kit>　|　CI 配置 `.github/workflows/eval.yml` 为 GitHub Actions 语法，Gitee 不执行（见 ROADMAP 第 2 条）
 
 ## 30 秒开场
 
@@ -38,7 +38,7 @@ flowchart TD
     HL[healer 四层自愈<br/>L1规则 L2语义CSS L3相对XPath L4 LLM] --> TESTS
     PF[profiles 规则包<br/>generic/element_plus/antd+站点] --> PC
     PF --> HL
-    AN -- 出境前 --> SA[utils.sanitize PII 脱敏]
+    AN -- 出境前 --> SA[utils 出境前脱敏<br/>sanitize / sanitize_structure / dom_diff]
     LLM[client LLM 客户端<br/>usage 回填 + 价目表] --> AN
     LLM --> HL
     GD --> EV[evaluation 指标+成本<br/>md/json 报告 → CI 周更]
@@ -83,7 +83,8 @@ schema 这一关，才允许变代码。
 
 黄金集 analyzer 30 + healer 24 + generator 10（手写 2 + 真页面采集脱敏冻结 8，
 统一 schema，规模底线有硬断言，CLI 样本不够直接退出码 1），指标全是纯函数（top-k /
-分层占比 / ECE / 可靠性表 / 编译通过率 / 重复率 / 感知链 eid 解析率与可执行率）。
+分层占比 / ECE / 可靠性表 / 编译通过率 / 重复率 / 感知链 eid 解析率与可执行率 /
+自愈稳定性（重复一致·命中冗余·排名稳固）/ 跨页泛化（短板页覆盖率·原型分桶））。
 成本从响应 `usage` 回填，按 model 查价目表换算元。
 `run_eval` 一条命令出三套件合并报告；CI 设计每周一跑完把报告 commit 回仓库，git 历史
 就是指标趋势看板 —— 仓库现托管 Gitee，该 workflow 不会自动执行，当前靠本地手动跑。
@@ -95,13 +96,25 @@ schema 这一关，才允许变代码。
 **关键决策**：没跑的就是没跑 —— 骨架模式在报告里明写“不代表真实生成质量”，
 缺配置的成本记 n/a，没账本直接 SKIPPED，不编数字。
 
-### 6. 数据安全（utils.sanitize）
+### 6. 数据安全（utils.sanitize / sanitize_structure / dom_diff）
 
-三条 LLM 出境链（healer L4 DOM / analyzer 文本 / analyzer 截图）写了明文清单，
-前两条出境前过 `sanitize`：抹 value 属性、textarea 内容、"字段名+值"的姓名/病历号
-（含跨标签结构）、PII 提示元素内文、手机号、身份证；幂等、纯 stdlib、保留 DOM 骨架。
+七条 LLM 出境链（healer L4 DOM / analyzer 文本 / generator 用例生成 / perception 清单摘要 /
+perception 原型确认 / proposal 归因与方案 / DOM 差异文本），除截图外全部在"拼完提示词、发出前"
+过一遍脱敏，清单见下方[出境点清单](#出境点清单)。
+
+三个工具分工：`sanitize` 抹 value 属性、textarea 内容、"字段名+值"的姓名/病历号（含跨标签结构）、
+PII 提示元素内文、手机号、身份证，幂等、纯 stdlib、保留 DOM 骨架；`sanitize_structure` 把送模型的
+嵌套清单（`slim_inventory` / `slim_page_structure`）逐字符串过筛 —— 不对整段 JSON 跑正则，因为
+JSON 里的值没有标签和字段名提示，正则只会误伤 eid 与行数；`dom_diff` 的产物本来就是给报告和
+提示词的，默认 `redact=True`。
+
 **关键决策**：脱敏目标是"值不出境"而不是"页面不可读" —— 按钮文案、class 刻意保留，
-全抹掉等于把自愈能力废掉。
+全抹掉等于把自愈能力废掉；表格样例行是唯一例外，整格抹成 `[REDACTED]`（一个没有字段名提示的
+孤立"张三"判不出来，那就别猜）。
+
+接线的质量代价已经量过：黄金集 8 页在冻结时就脱敏过，接上 `sanitize_structure` 之后 `--llm` 的
+prompt **逐字节不变**（`tests/test_prompts.py` 里有一条守门测试钉住这个结论），所以召回 31.1% /
+元素覆盖率 23.4% 与接线前一致。
 
 ## 评测实测数字
 
@@ -119,6 +132,17 @@ schema 这一关，才允许变代码。
 | 方案层人决策 proposal | **1** | 接受率 / 验证成功率 | 0.0% / n/a | ⚠ **n=1 仅一条 reject，样本量不足以谈比率**；验证成功率 n/a 是因 0 条被采纳（非 0%）；类型 join 认出 0 / unknown 1（本仓库未留档 report.json，宁可一桶 unknown 也不从 note 猜类型） |
 | 全量 `--llm` 成本 | 64 | — | **0.0287 元/次** | analyzer 15 次 0.0078 元 + generator 10 次 0.0209 元（qwen-plus，价目表快照输入 0.0008/输出 0.002 元每 1k）；最贵的是一次生成 8708 输出 tokens |
 | 真实 LLM 冒烟 | 1+1 | 三条断言 | **通过** | 真调到 / usage 采到 / 价目表认识型号；总成本 ≈0.0029 元（analyzer 0.000552 + generator 0.002307），n=1 只证通路 |
+
+**指标 v2（2026-10-28 离线实测，0 成本，`run_eval` 默认路径）**：
+
+| 指标 | 实测 | 口径与诚实标注 |
+| --- | --- | --- |
+| 自愈稳定性 · 重复调用一致 | **100.0%（24/24）** | 同夹具同入参连跑两次，候选序列（by + locator + 顺序）逐字节相等。规则层本来就确定，这条的价值是**回归护栏**：一旦跌破 100%，说明有隐藏状态泄漏；注入 LLM 的条目不重复跑（否则一次评测翻倍花钱），不进分母 |
+| 自愈稳定性 · 命中冗余 | **66.7%（16/24）** | 有 ≥2 个候选落到同一期望元素的 case 占比 —— 排头那个失效时还有下一手。剩下 8 条只有单一命中，其中 5 条点名在 `fragile_cases`（`H5_select_wrapper` / `H14` / `H16` / `H17` / `H18`） |
+| 自愈稳定性 · 排名稳固 | **87.5%（21/24）** | top1 命中 / top3 命中。差的 3 条是“命中了但排在二三位”，换页面版本就可能掉出 top1 |
+| 跨页泛化 · 短板页覆盖 | **9.5%**（最低页） / 中位 29.6% / 最高 100% | 8 页 282 个交互元素。主指标取**最差页**而不是均值 —— 7 页好、1 页空，均值照样高，但上线就瞎在那页；覆盖率低于一半的页 7 页 |
+| 跨页泛化 · 空页 | **0 页** | 没有任何一页“一条用例都派生不出来”（这类页比覆盖率低更严重，会单独点名） |
+| 跨页泛化 · 按原型 | form 5 页 26.4% / login 1 页 100.0% / **unknown 2 页 19.3%** | 2 页（`G_board` / `G_board_add`）5 条规则全不中：无表格、`charts=0`、按钮 62/65 个不满足 dashboard 的“稀疏”条件 —— 这是**分类器覆盖缺口**，不是覆盖率问题，记在这里不藏 |
 
 <details>
 <summary>真实 LLM 冒烟报告原文（2026-10-27 真 key 实跑，未改动）</summary>
@@ -222,9 +246,9 @@ python -m ai_kit.config --ping   # 真调一次验连通性，消耗极少 token
 **4. 验证装对了**
 
 ```powershell
-python -m pytest -q                    # 全量回归，当前 1127 passed
+python -m pytest -q                    # 全量回归，当前 1145 passed
 python -m ai_kit.evaluation.golden     # 黄金集体检，期望三行 OK + schema 0 个问题
-python -m ai_kit.evaluation.run_eval   # 离线评测，约 6 秒，0 成本
+python -m ai_kit.evaluation.run_eval   # 离线评测，约 12 秒，0 成本
 ```
 
 黄金集体检的预期输出：
@@ -276,7 +300,7 @@ python -m ai_kit.evaluation.run_eval                      # 离线评测出报�
 全量回归原文（2026-10-28 本机）：
 
 ```
-1127 passed, 2 warnings in 84.69s (0:01:24)
+1145 passed, 2 warnings in 136.13s (0:02:16)
 ```
 
 测试不是覆盖率装饰，架构决策靠命名成句的守门测试看住。点名三个：
@@ -300,9 +324,14 @@ CI 默认路径 0 成本；报告数字与代码口径冲突时以重跑为准�
 | --- | --- | --- |
 | `healer` L4 | 最多 3 段可见容器 `outerHTML`（每段截断 4000 字符） | **已脱敏**：拼提示词前过 `ai_kit.utils.sanitize` |
 | `analyzer` 文本 | traceback 末 2000 字符 + log 末 1000 字符 | **已脱敏**：同一函数，出境前过 `sanitize` |
+| `generator` 用例生成 | `slim_page_structure`：元素的 eid/text/tag/role/name/container/risk、约束与选项、表格列名与样例行、弹窗文案、页面标题与 url | **已脱敏**：出口过 `sanitize_structure`；`sample_rows` 按“格子就是数据”整格抹除（保留行列形状，最多 2 行 20 列） |
+| `perception` 清单摘要 | `slim_inventory`：eid/kind/type/name/container/risk/options/constraints + 标题/url/原型/信号 + 表格列名/行数/行内动作 + 弹窗按钮（不送 `text`/`html`/`attrs`） | **已脱敏**：出口过 `sanitize_structure` |
+| `perception` 原型确认 | 页面标题 + 前 20 个元素摘要（eid/kind/name/container/risk/required） | **已脱敏**：`_confirm_prompt` 出口过 `sanitize` |
+| `proposal` 归因 / 方案 | 用例标识 + traceback + 日志 + 页面快照 + 执行步骤；改目标文件与候选定位串 | **已脱敏**：两处 `_llm_user` 出口过 `sanitize`（定位串与文件名不碰） |
+| `dom_diff` | 操作前后可见文本行 + 标签签名（tag/role/type/name，**不含 class**） | **默认脱敏**：`redact=True`，产物进报告与提示词；无变化时返回一句说明而不是空串 |
 | `analyzer` 多模态 | 失败截图 base64（1 张） | **不做文本脱敏**：像素里的身份证/病历号无法用正则抹。要合规就裁切，或者不传 `screenshot_base64` |
 | 评测黄金集 | `golden/*.json` + `golden/fixtures/*.html` | 手写合成页；`source=collected` 的 8 条是 collector 从真页面采集后**脱敏冻结**的清单（域名换合成/表格裸文本清零/html 丢弃/sanitize+scrub，落盘前零残留扫描命中即拒写），不含真实业务数据；`--llm` 跑评测时送出去的也是这些样本 |
-| `perception` 采集 / 用例生成 | 元素清单（`text/attrs/constraints/html`） | `value` 在页面内 JS 里就换成 `[REDACTED]`（`collector.py`）；元素可见文本**未过** `sanitize`，见下方边界 |
+| `perception` 采集 | 元素清单（`text/attrs/constraints/html`） | `value` 在页面内 JS 里就换成 `[REDACTED]`（`collector.py`）；元素可见文本和上述 `text` 字段一样，出境前由 `sanitize_structure` 兜一层，但 raw 清单本身仍带可见文本，落盘会存原文 |
 
 ### 脱敏做什么
 
@@ -312,35 +341,35 @@ CI 默认路径 0 成本；报告数字与代码口径冲突时以重跑为准�
 - `class/id/name/data-*` 带 `patient-name`、`idCard`、`phone`、`mrn` 之类提示的元素内文
 - `姓名：X`、`<label>姓名</label>…X`、`病历号：X` 这类"字段名 + 值"里的值（含值在下一个标签的跨标签结构）
 - 手机号（含 `138-1234-5678` 分隔写法）、身份证（18 位含 X / 老式 15 位）
+- 送模型的清单摘要里每个字符串都过同一套规则（`sanitize_structure`），并且表格样例行**不靠猜**：
+  整格抹成 `[REDACTED]`，行列形状保留 —— 模型仍能看出“这表几行几列、列名叫什么”
 
 刻意保留：标签名、属性名、class、可见按钮文案（`删除患者` 这种）。LLM 靠这些推选择器，
 全抹掉等于把自愈能力废掉 —— 脱敏的目标是"值不出境"，不是"页面不可读"。
 
 ### 边界（不要当成万能合规方案）
 
-- 不认识**没有字段名提示的裸文本**：表格里孤零零一个"张三"，正则分不出它是姓名还是科室名。
-  这类靠 `value` / `class` / 字段名前缀覆盖，漏了就漏了，宁可漏也不乱猜；
-- **`perception` / `generator` 的链路只做了 value 脱敏**：元素清单里的可见文本（`text`）没接 `sanitize`，
-  医疗类页面表格里的姓名仍可能随用例生成出境。接法同 L4（拼提示词前包一层），但会改变生成质量，
-  需要先在黄金集上对比，所以没有顺手改；
+- 不认识**没有字段名提示的裸文本**：表格里孤零零一个“张三”，正则分不出它是姓名还是科室名。
+  清单摘要走 `sanitize_structure` 也是对同一套规则，所以这类只靠 `value` / `class` / 字段名前缀覆盖，
+  漏了就漏了，宁可漏也不乱猜；表格样例行是唯一例外 —— 那里按“格子就是数据”整格抹除，不猜；
+- 只认**带 PII 提示的 class/id/name**：`<span class="col-3">张三</span>` 这类无名提示的字段照样漏；
 - 不处理**图片**：截图见上表；
-- 不做**去标识化关联**：抹掉的是值本身，不是把它换成稳定假名，所以"同一患者"在两次调用间不可追踪。
+- 不做**去标识化关联**：抹掉的是值本身，不是把它换成稳定假名，所以“同一患者”在两次调用间不可追踪。
 
-要接新的出境点，先加 `sanitize(...)`，再在 `tests/test_utils_sanitize.py` 里补一条"合成数据 → 断言零残留"。
+要接新的出境点，先加 `sanitize(...)` / `sanitize_structure(...)`，再在 `tests/test_utils_sanitize.py`
+或 `tests/test_prompts.py` 里补一条“合成数据 → 断言零残留 + 结构保留”。
 
 ## ROADMAP（未做，各带验收口径）
 
-1. **`perception`/`generator` 可见文本接 `sanitize`** —— 会改变生成质量，先在黄金集上跑对比再合；
-2. **`utils.dom_diff`** —— 目前只有 docstring 声明、无实现，与 L4 的 DOM 差异定位是同一需求；
-3. **评测指标 v2 剩余项**（跨页泛化 / 自愈稳定性等）—— 已落地的元素覆盖率、eid 解析率、
-   可执行率、方案层接受率与验证成功率见 `ai_kit/evaluation/README.md` 指标总表；剩下没做的
-   仍标 `—`，没跑就是没跑；
-4. **perception 真检出 P/R**（元素该采到的采到了几成 / 采到的里有几成是真的）—— 需要人工
+1. **perception 真检出 P/R**（元素该采到的采到了几成 / 采到的里有几成是真的）—— 需要人工
    标注每页元素真值，采集一张页就要标一张，成本高；本期只上了解析率/可执行率这两个
    无需真值的链路率，**P/R 没做，不装做能做**；
-5. **CI 真实触发验证** —— 仓库现托管 Gitee（`gitee.com/twinkleqwq/ai_kit`），
+2. **CI 真实触发验证** —— 仓库现托管 Gitee（`gitee.com/twinkleqwq/ai_kit`），
    `.github/workflows/eval.yml` 不会被 Gitee 执行；要自动周更需接 Gitee Go（或回 GitHub）。
    全量 `--llm` 已跑完（0.0287 元/次，数字见上表），CI 等价物就是本地手动跑 `run_eval --llm`。
+
+已收口的三项（不再是 ROADMAP）：`perception`/`generator` 可见文本接 `sanitize`、`utils.dom_diff`
+实现、指标 v2（跨页泛化 / 自愈稳定性）—— 结论与数字见上表与 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 许可证
 

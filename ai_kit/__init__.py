@@ -7,7 +7,7 @@ ai_kit — 可移植的 Web UI 测试 AI 工具箱
     proposal/    方案: 失败诊断(含 blame) -> 修复方案类型 -> 确认报告 -> 应用/回滚/验证
     evaluation/  评测: 黄金集 + 指标 + 成本 -> md/json 报告 (默认 0 成本, 可进 CI)
     runtime/     standalone 运行原语: actions / waits (统一显式等待, 替代 time.sleep)
-    utils/       通用工具: PII 脱敏 (dom_diff 还是声明, 未实现)
+    utils/       通用工具: PII 脱敏 sanitize / sanitize_structure + DOM 差异 dom_diff
     profiles/    规则包: 内置 generic/element_plus/antd + 站点 profile (JSON)
 
     client.py    LLM 客户端 (OpenAI Chat Completions 兼容, 多模态, usage 回填)
@@ -65,8 +65,10 @@ _LAZY: dict[str, tuple[str, str]] = {
     "BudgetExceeded": ("ai_kit.ledger", "BudgetExceeded"),
     "RunLedger": ("ai_kit.ledger", "RunLedger"),
     "meter": ("ai_kit.ledger", "meter"),
-    # utils: 送 LLM 前的 PII 脱敏 (healer L4 / 任何要拼提示词的地方)
+    # utils: 送 LLM 前的 PII 脱敏与 DOM 差异 (所有出境点都用这两样)
     "sanitize": ("ai_kit.utils", "sanitize"),
+    "sanitize_structure": ("ai_kit.utils", "sanitize_structure"),
+    "dom_diff": ("ai_kit.utils", "dom_diff"),
 }
 
 __all__ = sorted(_LAZY)

@@ -83,6 +83,8 @@ pytest tests/test_metrics.py tests/test_golden.py tests/test_eval_report.py
 | generator | 元素覆盖率 | ≥1 条用例引用到的交互元素 ÷ inventory 可交互元素总数；跨页分子分母各自相加 | v2 | ✅ | `metrics.element_coverage` → `report.chain.element_coverage`（`total` / `covered` / `rate` / `n_pages`） |
 | generator | eid 解析率 | `plan` 里全部非空 `step.eid`（含 cleanup / 复合引用）能在采集清单 `resolve_ref` 到的比例 | v2 | ✅ | `metrics.perception_chain_metrics` → `report.chain.metrics.eid_parse_rate` |
 | generator | 可执行率 | `render` 出码且 `verify` 后未标 `needs_review` 的用例占比 | v2 | ✅ | 同上 → `report.chain.metrics.executable_rate` |
+| healer | 自愈稳定性 | ① 重复一致 = 同夹具同入参连跑两次候选序列（by+locator+顺序）逐字节相等；② 命中冗余 = 落到期望元素的候选 ≥2 个；③ 排名稳固 = top1 命中 ÷ top3 命中 | v2 | ✅ | `metrics.healing_stability` → `report.stability`（含 `fragile_cases`） |
+| generator | 跨页泛化 | 主指标取**最差页**的交互元素覆盖率（不看均值）+ 按 `archetype` 分桶；派生不出用例的页按 0 计并点名 | v2 | ✅ | `metrics.cross_page_generalization` → `report.chain.generalization` |
 | perception | 元素抽取 P/R | vs 人工标注（抽样 10 页一次性基准） | v2 | — | 待 v2 |
 | proposal | 人工接受率 | `accept ÷ (accept+reject)`，defer 未决定不进分母 | v2 | ✅ | `metrics.proposal_decision_metrics` → `overall.acceptance_rate`（+ `by_type` 分列） |
 | proposal | 验证成功率 | `accept 且 verify=passed ÷ accept`；一条都没采纳时显 n/a 而不是 0% | v2 | ✅ | 同上 → `overall.verify_success_rate` |
@@ -98,6 +100,14 @@ pytest tests/test_metrics.py tests/test_golden.py tests/test_eval_report.py
   出现多少预期关键词”，计划只用 `eid` 引用时天然偏低。两者并列报，**不互相替代**。
   该指标与 `--llm` 无关（感知链始终走确定性规划器）：数值低不代表生成差，代表规划器只走了核心 CRUD
   路径 —— 当前 8 页 282 个交互元素覆盖 66 个（23.4%）。
+- **自愈稳定性为什么不是“能力指标”**：规则层本来就是确定的，重复一致 100% 是**回归护栏** ——
+  它跌了说明有隐藏状态泄漏（缓存 / 随机序 / 全局变量）。真正有信息量的是后两项：命中冗余
+  （排头失效时还有没有下一手）与排名稳固（是命中在 top1 还是靠 top3 捞回来）。
+- **注入 LLM 的条目不重复跑**：`--llm` 下每个 case 再问一次等于把评测成本翻倍，所以
+  `repeat_same` 记 `None`，**不进一致性分母**（None 不当 False 算）。
+- **跨页泛化看短板不看均值**：7 页好、1 页空，均值照样很高，但上线就瞎在那页；派生不出用例的页
+  比覆盖率低更严重，单独进 `zero_case_pages`。原型分桶用规则分类器（0 成本），当前 2 页落
+  `unknown`（无表格、`charts=0`、按钮几十个不满足 dashboard 的稀疏条件）—— 那是分类器覆盖缺口。
 
 ## 黄金集 (7.2) — `golden/`
 一份 schema，三套件共用（加载与校验在 `golden.py`）：
