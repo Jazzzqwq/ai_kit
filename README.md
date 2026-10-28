@@ -1,5 +1,7 @@
 # ai_kit
 
+![AI 评测周更](https://github.com/Twinkle-qwq/ai_kit/actions/workflows/eval.yml/badge.svg?branch=master)
+
 ## 30 秒开场
 
 **是什么**：可移植的 Web UI 测试 AI 工具箱 —— 定位器自愈、失败归因、用例生成、离线评测。
@@ -187,7 +189,7 @@ python -m ai_kit.evaluation.run_eval                      # 离线评测出报�
 | --- | --- |
 | `test_package_import.py::test_top_level_package_stays_lazy` | PEP 562 惰性导出：`import ai_kit` 不拉起 selenium/子模块，`__all__` 与 `dir()` 一致，装了包但没装 selenium 的进程也能 import |
 | `test_package_import.py::test_guard_detects_a_smuggled_host_project_import` | 守门自检：往源码树塞一条 import 宿主项目的语句，依赖白名单扫描必须抓到 —— 证明守门器本身不是摆设 |
-| `test_golden.py::test_the_analyzer_golden_set_meets_its_floor`（healer 同） | 黄金集规模底线：analyzer ≥30 / healer ≥24，样本缩水直接红，指标分母不保真 |
+| `test_golden.py::test_the_analyzer_golden_set_meets_its_floor`（healer / generator 同） | 黄金集规模底线：analyzer ≥30 / healer ≥20 / generator ≥8（当前样本 30 / 24 / 10），样本缩水直接红，指标分母不保真 |
 
 其余惯例：指标全是纯函数（给 dict 出数字，不碰 IO）；LLM 一律 mock 或显式 `--llm`，
 CI 默认路径 0 成本；报告数字与代码口径冲突时以重跑为准。
@@ -234,13 +236,15 @@ CI 默认路径 0 成本；报告数字与代码口径冲突时以重跑为准�
 
 1. **`perception`/`generator` 可见文本接 `sanitize`** —— 会改变生成质量，先在黄金集上跑对比再合；
 2. **`utils.dom_diff`** —— 目前只有 docstring 声明、无实现，与 L4 的 DOM 差异定位是同一需求；
-3. **评测指标 v2 六项**（跨页泛化 / 自愈稳定性等）—— 报告里现在标 `—`，没跑就是没跑；
+3. **评测指标 v2 剩余项**（元素覆盖率 / 跨页泛化 / 自愈稳定性等）—— 已落地的 eid 解析率、
+   可执行率、方案层接受率与验证成功率见 `ai_kit/evaluation/README.md` 指标总表；剩下没做的
+   仍标 `—`，没跑就是没跑；
 4. **perception 真检出 P/R**（元素该采到的采到了几成 / 采到的里有几成是真的）—— 需要人工
    标注每页元素真值，采集一张页就要标一张，成本高；本期只上了解析率/可执行率这两个
    无需真值的链路率，**P/R 没做，不装做能做**；
 5. **CI 真实触发验证 + 全量 `--llm` 评测** —— 本仓库当前尚未配 git remote，push 到 GitHub 后
    从 Actions 页 `Run workflow` 实触发一次冒烟；全量 `--llm`（30+24 条真调）花钱多，没顺手跑。
 
-<!-- CI 徽章: 推到 GitHub 后把 <owner>/<repo> 换成真实地址即生效
-![AI 评测周更](https://github.com/<owner>/<repo>/actions/workflows/eval.yml/badge.svg?branch=master)
--->
+## 许可证
+
+MIT © 2026 Twinkle-qwq，见 [LICENSE](LICENSE)。

@@ -19,7 +19,9 @@ ai_kit/evaluation/
 ├── cost_tracker.py      # token→元 成本累计 (每次 / 每页)
 ├── eval_healer.py       # 套件1: 坏定位器→正确定位器, top1/top3 + L1-L4 分层对照
 ├── eval_analyzer.py     # 套件2: 失败场景→根因, 准确率(严格/含容错) + 过度欠自信 + ECE
-├── eval_generator.py    # 套件3: page_structure→用例, py_compile率/覆盖率/重复率
+├── eval_generator.py    # 套件3: page_structure→用例, py_compile率/覆盖率/重复率 + 感知链两项率
+├── eval_proposal.py     # 套件4: 方案层人决策 (接受率/验证成功率, 读本地 decisions.jsonl)
+├── collect_golden.py    # 真页面采集 → 脱敏冻结 golden (两步式: collect / freeze)
 ├── run_eval.py          # CLI 入口, 汇总 → md + json 报告 (+ --smoke 冒烟)
 └── golden/
     ├── healer_cases.json / analyzer_cases.json / generator_cases.json
@@ -73,15 +75,18 @@ pytest tests/test_metrics.py tests/test_golden.py tests/test_eval_report.py
 | cost | 每页成本 | 总成本 ÷ 页数（generator 一条 case 一页） | v1 | ✅ | `cost_tracker.summary(units=).per_page` |
 | generator | 去重率 | 步骤 Jaccard>0.8 近重复对占比（+ 方法名碰撞） | v2 | ✅ | `metrics.duplication_rate` → `report.avg_step_near_dup_rate` |
 | generator | 元素覆盖率 | ≥1 条用例覆盖的交互元素 ÷ 总交互元素 | v2 | — | 现只有 `coverage_recall`（关键词召回，口径不同，不冒充） |
-| generator | eid 解析率 | 步骤定位器在活页面可解析比例 | v2 | — | 待 v2 |
-| generator | 可执行率 | 无框架错误跑完（mock 环境） | v2 | — | 待 v2 |
+| generator | eid 解析率 | `plan` 里全部非空 `step.eid`（含 cleanup / 复合引用）能在采集清单 `resolve_ref` 到的比例 | v2 | ✅ | `metrics.perception_chain_metrics` → `report.chain.metrics.eid_parse_rate` |
+| generator | 可执行率 | `render` 出码且 `verify` 后未标 `needs_review` 的用例占比 | v2 | ✅ | 同上 → `report.chain.metrics.executable_rate` |
 | perception | 元素抽取 P/R | vs 人工标注（抽样 10 页一次性基准） | v2 | — | 待 v2 |
-| proposal | 人工接受率 | `accept ÷ (accept+reject)` | v2 | — | 待 v2（原料已在 `decisions.jsonl`） |
-| proposal | 验证成功率 | apply 后重跑 passed 比例 | v2 | — | 待 v2（同上） |
+| proposal | 人工接受率 | `accept ÷ (accept+reject)`，defer 未决定不进分母 | v2 | ✅ | `metrics.proposal_decision_metrics` → `overall.acceptance_rate`（+ `by_type` 分列） |
+| proposal | 验证成功率 | `accept 且 verify=passed ÷ accept`；一条都没采纳时显 n/a 而不是 0% | v2 | ✅ | 同上 → `overall.verify_success_rate` |
 
-两条口径说明：
+口径说明：
 - **未知 ↔ 未知算对**：黄金集里 `expected.category = 未知-待人工分析` 的条目，规则答“未知”也计为对 —— 该说不说时不乱猜，是这个分类的存在意义。
 - **容错只由人写**：`acceptable_categories` 来自黄金集人工标注，不用规则自报的歧义（否则规则说什么都对）。规则自报的歧义单列在 `rule_acceptable`，只作审计。
+- **感知链两项率的分母**：eid 解析率按「引用」计（`n_refs`）、可执行率按「用例」计（`n_cases`）；分母为 0 时渲染层显 n/a 而不是 0%。
+  离线是确定性规划器、无幻觉，解析率预期接近 100%（真能打破它的是 `--llm` 引用幻觉，本期未接）；
+  被标 `needs_review` 的多是 `set_network` 这类需 CDP 断网的动作，渲染器诚实拒收。
 
 ## 黄金集 (7.2) — `golden/`
 一份 schema，三套件共用（加载与校验在 `golden.py`）：
@@ -101,9 +106,9 @@ pytest tests/test_metrics.py tests/test_golden.py tests/test_eval_report.py
 - `module`：这条 case 喂哪个套件（`analyzer` / `healer` / `generator`；飞轮的负面清单是 `proposal`）。
 - `input` / `expected` 按模块不同：healer 是「夹具 + 坏定位器 + 意图」→「定位器 + 目标元素」；generator 是「页面结构 + PO 签名」→「应覆盖分类/关键词」。
 - `rule_version`：标注那天的规则版本（analyzer 跟 `RULES_VERSION` 走），回归时先看它。
-- `source`：`manual` / `flywheel`；报告里分开报 `n_manual` / `n_flywheel`，就按它数。
+- `source`：`manual` / `flywheel` / `collected`（后者由 `collect_golden.py` 从真页面采集后脱敏冻结，见该模块 docstring）；报告里分开报 `n_manual` / `n_flywheel`，就按它数。
 - 老平铺格式（`traceback` / `expected_category`）加载时自动归一 —— 6.6 已经导出过老形状的文件，存量数据不该因为改 schema 就读不了。
-- **规模底线**：analyzer ≥30、healer ≥20。`python -m ai_kit.evaluation.golden` 低于底线或字段缺失直接退出 1。
+- **规模底线**：analyzer ≥30、healer ≥20、generator ≥8（当前样本 30 / 24 / 10）。`python -m ai_kit.evaluation.golden` 低于底线或字段缺失直接退出 1。
 - **fixtures**：`golden/fixtures/*.html` 本地静态页（Element Plus 风格 + 通用表单各几份），评测不依赖真实站点。
 - **所有报告带 n**：`analyzer.n` / `healer.n` / `generator.n` / 成本表也有 `样本 n`。
 
