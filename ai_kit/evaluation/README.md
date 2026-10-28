@@ -77,7 +77,7 @@ pytest tests/test_metrics.py tests/test_golden.py tests/test_eval_report.py
 | cost | 每次成本 | 总成本 ÷ LLM 调用次数（token × 价目表快照） | v1 | ✅ | `cost_tracker.summary().per_call` |
 | cost | 每页成本 | 总成本 ÷ 页数（generator 一条 case 一页） | v1 | ✅ | `cost_tracker.summary(units=).per_page` |
 | generator | 去重率 | 步骤 Jaccard>0.8 近重复对占比（+ 方法名碰撞） | v2 | ✅ | `metrics.duplication_rate` → `report.avg_step_near_dup_rate` |
-| generator | 元素覆盖率 | ≥1 条用例覆盖的交互元素 ÷ 总交互元素 | v2 | — | 现只有 `coverage_recall`（关键词召回，口径不同，不冒充） |
+| generator | 元素覆盖率 | ≥1 条用例引用到的交互元素 ÷ inventory 可交互元素总数；跨页分子分母各自相加 | v2 | ✅ | `metrics.element_coverage` → `report.chain.element_coverage`（`total` / `covered` / `rate` / `n_pages`） |
 | generator | eid 解析率 | `plan` 里全部非空 `step.eid`（含 cleanup / 复合引用）能在采集清单 `resolve_ref` 到的比例 | v2 | ✅ | `metrics.perception_chain_metrics` → `report.chain.metrics.eid_parse_rate` |
 | generator | 可执行率 | `render` 出码且 `verify` 后未标 `needs_review` 的用例占比 | v2 | ✅ | 同上 → `report.chain.metrics.executable_rate` |
 | perception | 元素抽取 P/R | vs 人工标注（抽样 10 页一次性基准） | v2 | — | 待 v2 |
@@ -90,6 +90,11 @@ pytest tests/test_metrics.py tests/test_golden.py tests/test_eval_report.py
 - **感知链两项率的分母**：eid 解析率按「引用」计（`n_refs`）、可执行率按「用例」计（`n_cases`）；分母为 0 时渲染层显 n/a 而不是 0%。
   离线是确定性规划器、无幻觉，解析率预期接近 100%（真能打破它的是 `--llm` 引用幻觉，本期未接）；
   被标 `needs_review` 的多是 `set_network` 这类需 CDP 断网的动作，渲染器诚实拒收。
+- **元素覆盖率 vs 覆盖率(召回)**：元素覆盖率看“交互元素有没有被用例点到”，分母是 `inventory.by_eid`
+  （表格/弹窗/图表走 `lookup`，不在分母里，引用它们也不计入分子）；`coverage_recall` 看“计划文本里
+  出现多少预期关键词”，计划只用 `eid` 引用时天然偏低。两者并列报，**不互相替代**。
+  该指标与 `--llm` 无关（感知链始终走确定性规划器）：数值低不代表生成差，代表规划器只走了核心 CRUD
+  路径 —— 当前 8 页 282 个交互元素覆盖 66 个（23.4%）。
 
 ## 黄金集 (7.2) — `golden/`
 一份 schema，三套件共用（加载与校验在 `golden.py`）：

@@ -233,12 +233,20 @@ def _md(report: Dict[str, Any]) -> str:
             lines.append(f"- 感知链实跑 ({ch['n_cases']} 条采集冻结样本): "
                          f"**eid 解析率 {parse}** ({cm.get('refs_resolved', 0)}/{cm.get('n_refs', 0)} 个引用) | "
                          f"**可执行率 {exec_}** ({cm.get('cases_executable', 0)}/{cm.get('n_cases', 0)} 条用例)")
+            ec = ch.get("element_coverage") or {}
+            if ec.get("total"):
+                lines.append(f"- **元素覆盖率 {_pct(ec['rate'])}** "
+                             f"({ec.get('covered', 0)}/{ec['total']} 个交互元素至少被一条用例点到, "
+                             f"{ec.get('n_pages', 0)} 页汇总)")
             if ch.get("n_errors"):
                 lines.append(f"- ⚠ 其中 {ch['n_errors']} 条链路跑报错, 计入分母但不计入分子 (见 JSON 的 cases[].chain)")
             lines.append("> 口径: eid 解析率 = plan 里全部非空 step.eid (含 cleanup/复合引用) 能在采集清单里"
                          " resolve_ref 到的比例; 可执行率 = render 出码且 verify 后未标 needs_review 的比例。"
                          "确定性规划器无幻觉, 离线模式解析率预期接近 100%, 真正能打破它的是 --llm 引用幻觉;"
-                         "活页面层离线无 driver 时跳过 (live_skipped), 不影响这两项读数。")
+                         "活页面层离线无 driver 时跳过 (live_skipped), 不影响这两项读数。"
+                         "元素覆盖率分母是 inventory 的可交互元素 (表格/弹窗/图表走 lookup 不在内),"
+                         " 复合引用 (c1.column:X) 不计入分子; 它与覆盖率(召回)不是同一把尺子 ——"
+                         " 那个按计划文本里的预期关键词算, 计划只用 eid 引用时天然偏低。")
         else:
             lines.append("- 感知链实跑: n/a (黄金集里没有带 inventory 的采集冻结样本, 不是 0%)")
         lines.append("")

@@ -298,6 +298,33 @@ def perception_chain_metrics(ref_rows: Sequence[Mapping[str, Any]],
 
 
 # ---------------------------------------------------------------------------
+# 元素覆盖率: 交互元素被用例引用到的比例
+# ---------------------------------------------------------------------------
+
+def element_coverage(inventory_eids: Sequence[str],
+                     referenced_eids: Sequence[str]) -> Dict[str, Any]:
+    """交互元素覆盖率 = 至少被一条用例引用到的交互元素 / inventory 里的全部交互元素
+
+    分母只认 inventory.by_eid (可交互元素)；表格/弹窗/图表走 lookup, 不在里面 ——
+    复合引用 (c1.column:X / chart:N) 指向的是这些 lookup 记录, 对交互元素没有意义,
+    所以只按精确 eid 命中算覆盖, 不把复合引用凑进分子。
+
+    与 coverage_recall 的区别: 那个按"计划文本里出现多少预期关键词"算, 计划用 eid
+    引用时天然偏低; 这个只看元素有没被点到, 与计划用什么措辞无关。
+    """
+    total_eids = sorted({str(e).strip() for e in inventory_eids or () if str(e).strip()})
+    refs = {str(e).strip() for e in referenced_eids or () if str(e).strip()}
+    covered = [e for e in total_eids if e in refs]
+    missing = [e for e in total_eids if e not in refs]
+    return {
+        "total": len(total_eids),
+        "covered": len(covered),
+        "rate": round(safe_div(len(covered), len(total_eids)), 4),
+        "missing": missing[:10],   # 只留样例, 不在报告里塞整页清单
+    }
+
+
+# ---------------------------------------------------------------------------
 # py_compile 通过率
 # ---------------------------------------------------------------------------
 

@@ -68,11 +68,15 @@ def _chain_case(c: Dict[str, Any]) -> Dict[str, Any]:
                   "rendered": bool(src.get(case.case_id)),
                   "needs_review": bool(case.needs_review)}
                  for case in v.cases]
+    # 元素覆盖率: 分母是 inventory 的可交互元素 (by_eid, 表格/弹窗走 lookup 不在内),
+    # 分子是被 steps/cleanup 真点到的那些 —— 与计划用词无关, 补 coverage_recall 看不出的"漏点"
+    elem_cov = metrics.element_coverage(inv.by_eid.keys(), [row["ref"] for row in ref_rows])
     return {
         "id": c["id"],
         "n_plan_cases": len(v.cases),
         "refs": ref_rows,
         "cases": case_rows,
+        "element_coverage": elem_cov,
         "live_skipped": list((v.diagnostics or {}).get("live_skipped") or ()),
         "verify": str((v.diagnostics or {}).get("verify") or ""),
     }
@@ -170,6 +174,12 @@ def run(use_llm: bool = False, limit: Optional[int] = None) -> Dict[str, Any]:
     ref_rows = [x for ch in chains for x in ch.get("refs") or ()]
     chain_case_rows = [x for ch in chains for x in ch.get("cases") or ()]
     chain_errors = [ch for ch in chains if ch.get("error")]
+    # 元素覆盖率跨页汇总: 分子分母各自相加 (元素口径), 不是对各页 rate 求平均 ——
+    # 否则 3 个元素的小页和 30 个元素的大页权重一样
+    elem_rows = [ch["element_coverage"] for ch in chains
+                 if isinstance(ch.get("element_coverage"), dict)]
+    elem_total = sum(int(x.get("total") or 0) for x in elem_rows)
+    elem_covered = sum(int(x.get("covered") or 0) for x in elem_rows)
 
     # 一条 case 对应一个页面 → 每页成本才有意义 (每次成本随 prompt 长短飘)
     return {
@@ -187,6 +197,12 @@ def run(use_llm: bool = False, limit: Optional[int] = None) -> Dict[str, Any]:
             "n_cases": len(chains),
             "n_errors": len(chain_errors),
             "metrics": metrics.perception_chain_metrics(ref_rows, chain_case_rows),
+            "element_coverage": {
+                "n_pages": len(elem_rows),
+                "total": elem_total,
+                "covered": elem_covered,
+                "rate": round(metrics.safe_div(elem_covered, elem_total), 4),
+            },
         },
         "cost": cost.summary(units=len(cases)),
         "cases": rows,

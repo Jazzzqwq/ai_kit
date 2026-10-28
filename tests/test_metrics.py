@@ -152,6 +152,28 @@ def test_perception_chain_metrics_empty_denominators():
     assert r["eid_parse_rate"] == 0.0 and r["executable_rate"] == 0.0
 
 
+def test_element_coverage():
+    """交互元素覆盖: 至少被引用一次即算覆盖, 重复引用不重复计数"""
+    r = m.element_coverage(["e1", "e2", "e3", "e4"], ["e1", "e3", "e3"])
+    assert r["total"] == 4 and r["covered"] == 2
+    assert r["rate"] == 0.5
+    assert r["missing"] == ["e2", "e4"]
+
+
+def test_element_coverage_ignores_lookup_refs():
+    """表格/弹窗/图表走 lookup 不在 by_eid: 引用它们不算覆盖, 也不算漏"""
+    r = m.element_coverage(["e1", "e2"], ["c1", "c1.column:姓名", "chart:1", ""])
+    assert r["covered"] == 0 and r["missing"] == ["e1", "e2"]
+    assert r["rate"] == 0.0   # 分母不为 0 但一个没覆盖, 是真的 0%
+
+
+def test_element_coverage_edge_cases():
+    """分母 0 时率是 0.0 (渲染层显 n/a); eid 去重/去空白, 分母不能虚高"""
+    r = m.element_coverage([], ["e1"])
+    assert r["total"] == 0 and r["covered"] == 0 and r["rate"] == 0.0
+    assert m.element_coverage(["e1", "e1", " e1 "], ["e1"])["total"] == 1
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

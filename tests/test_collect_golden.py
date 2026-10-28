@@ -217,6 +217,32 @@ def test_chain_metrics_on_real_golden():
     assert m == expect
 
 
+def test_chain_element_coverage_on_real_golden():
+    """元素覆盖率: 跨页分子分母各自相加, 不是对各页 rate 求平均
+
+    离线真实读数 (2026-10-28): 8 页 282 个交互元素覆盖 66 个 (23.4%)。这里只锁口径
+    自洽 —— 改规划器策略时数字应该动, 但加法关系不能错。
+    """
+    from ai_kit.evaluation import eval_generator
+    r = eval_generator.run()
+    ec = r["chain"]["element_coverage"]
+    pages = [row["chain"]["element_coverage"] for row in r["cases"]
+             if isinstance(row.get("chain"), dict)
+             and isinstance(row["chain"].get("element_coverage"), dict)]
+    assert ec["n_pages"] == len(pages) >= 8
+    assert ec["total"] == sum(p["total"] for p in pages)
+    assert ec["covered"] == sum(p["covered"] for p in pages)
+    assert 0 < ec["covered"] <= ec["total"]
+    assert ec["rate"] == round(ec["covered"] / ec["total"], 4)
+    # 页内也自洽: 表格/复合引用走 lookup, 不会把 covered 算超过 total
+    for p in pages:
+        assert 0 <= p["covered"] <= p["total"]
+        if p["total"]:
+            assert p["rate"] == round(p["covered"] / p["total"], 4)
+        else:
+            assert p["rate"] == 0.0
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
