@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 
 from ai_kit.perception.inventory import ElementSpec, PageInventory, from_inventory
+from ai_kit.utils import sanitize
 
 # ---------------------------------------------------------------------------
 # 原型名 (④ strategies 用这些字符串查 checklist, 别随手改)
@@ -309,6 +310,13 @@ _CONFIRM_TEMPLATE = """页面标题: {title}
 
 
 def _confirm_prompt(inv: PageInventory, result: ArchetypeResult) -> str:
+    """拼确认提示词; 出境前过 sanitize
+
+    送出去的是标题 + 元素摘要 (name 是占位符 / 可见文案)。详情页标题常写成
+    "患者详情 - 张三", 列表页元素名可能带"病历号：MR001", 这段文本的唯一去向
+    就是 LLM, 所以在出口统一抹一遍。eid / kind / container 不带 PII 形态, 抹不到 ——
+    而分类判断恰恰靠它们, 骨架必须原样留着。
+    """
     stats = inv.stats
     lines = []
     for element in inv.elements[:20]:
@@ -321,7 +329,7 @@ def _confirm_prompt(inv: PageInventory, result: ArchetypeResult) -> str:
         if element.constraints.get("required"):
             bits.append("required")
         lines.append("- " + " ".join(bits))
-    return _CONFIRM_TEMPLATE.format(
+    return sanitize(_CONFIRM_TEMPLATE.format(
         title=inv.title or inv.page_name or "(无标题)",
         interactive=stats.get("interactive_count", len(inv.elements)),
         inputs=stats.get("inputs", 0),
@@ -336,7 +344,7 @@ def _confirm_prompt(inv: PageInventory, result: ArchetypeResult) -> str:
         scores=json.dumps(result.scores, ensure_ascii=False),
         elements="\n".join(lines) or "(无)",
         candidates=" / ".join(ARCHETYPES),
-    )
+    ))
 
 
 def _parse_answer(answer: Any) -> Dict[str, Any]:

@@ -59,6 +59,7 @@ from typing import Any, Callable, Dict, Optional, Sequence, Tuple
 
 from ai_kit import analyzer
 from ai_kit.ledger import BudgetExceeded
+from ai_kit.utils import sanitize
 from ai_kit.proposal import diagnoser
 from ai_kit.proposal.diagnoser import (
     PROPOSAL_ENV_ISSUE, PROPOSAL_PRODUCT_BUG,
@@ -586,7 +587,11 @@ def _describe_candidates(candidates: Sequence[Any]) -> str:
 def _llm_user(diagnosis: FailureDiagnosis, context: Optional[FailureContext], *,
               candidates: Sequence[Any], dom_diff: str,
               target_file: str, source_available: bool) -> str:
-    """只贴事实: 用例 / traceback / 日志 / 步骤 / 页面快照 / 归因 / 候选 / DOM 差异"""
+    """只贴事实: 用例 / traceback / 日志 / 步骤 / 页面快照 / 归因 / 候选 / DOM 差异
+
+    出口过 sanitize: traceback、快照、dom_diff 里都可能有患者数据, 而这段文本
+    只给 LLM 看 (改目标文件 / 候选定位串 / 归因文字一律不碰)。
+    """
     parts = []
     label = ""
     if context is not None:
@@ -610,7 +615,7 @@ def _llm_user(diagnosis: FailureDiagnosis, context: Optional[FailureContext], *,
     parts.append(f"=== 目标文件 ===\n{_posix(target_file) or '未提供'}"
                  + (": 已给原文, 可以写 diff" if source_available
                     else ": 没有原文, diff 必须留空"))
-    return "\n\n".join(parts)
+    return sanitize("\n\n".join(parts))
 
 
 def _from_llm(item: Any, *,

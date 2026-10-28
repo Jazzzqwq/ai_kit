@@ -53,6 +53,7 @@ from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 
 from ai_kit import analyzer
 from ai_kit.ledger import BudgetExceeded
+from ai_kit.utils import sanitize
 
 __all__ = [
     "BLAME_PRODUCT", "BLAME_ENVIRONMENT", "BLAME_TEST_CODE", "BLAME_UNKNOWN",
@@ -506,7 +507,11 @@ def describe_observation(observation: Optional[PageObservation]) -> str:
 
 
 def _llm_user(context: FailureContext) -> str:
-    """只贴事实: 用例标识 / traceback / 日志 / 页面快照 / 执行步骤"""
+    """只贴事实: 用例标识 / traceback / 日志 / 页面快照 / 执行步骤
+
+    出境前过 sanitize: 失败断言里常带着被测页面填的值 (手机号 / 病历号),
+    而这段文本的唯一去向就是 LLM。用例标识和步骤序号都在行首, 抹不到。
+    """
     parts = []
     label = context.case_id or context.test_name
     if label:
@@ -518,7 +523,7 @@ def _llm_user(context: FailureContext) -> str:
         numbered = "\n".join(f"{i}. {step}"
                              for i, step in enumerate(context.steps[:20], 1))
         parts.append(f"=== 执行步骤 ===\n{numbered}")
-    return "\n\n".join(parts)
+    return sanitize("\n\n".join(parts))
 
 
 def _default_llm() -> Optional[Callable[..., Any]]:

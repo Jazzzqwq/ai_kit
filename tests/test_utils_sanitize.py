@@ -9,10 +9,12 @@ PII 脱敏 (任务 1-1): 出境前把 DOM / 日志里的患者数据抹掉
 """
 from __future__ import annotations
 
+import json
+
 from selenium.webdriver.common.by import By
 
 from ai_kit import healer
-from ai_kit.utils import REDACTED, sanitize
+from ai_kit.utils import REDACTED, dom_diff, sanitize, sanitize_structure
 
 # 合成的患者编辑弹窗: 姓名/身份证/手机号/病历号各一份, 值都塞在最常见的
 # 三个位置 (value 属性 / 带 class 提示的元素 / 裸文本)
@@ -242,3 +244,102 @@ def test_analyzer_prompt_carries_no_pii(monkeypatch):
     for probe in ("MR20240315008", "13812345678", "13812345670"):
         assert probe not in user, f"analyzer 提示词里还在泄 PII: {probe}"
     assert "AssertionError" in user and "病历号" in user, "归因需要的结构不能抹没"
+
+
+# ---------------------------------------------------------------------------
+# 结构脱敏: 送模型的清单摘要是个嵌套 dict, 逐字段过筛
+# ---------------------------------------------------------------------------
+
+def test_sanitize_structure_walks_nested_values_and_keeps_the_shape():
+    """PII 藏在 name / options / notes 里; 键名、eid、行数必须原样留着"""
+    payload = {
+        "elements": [{"eid": "e1", "name": "手机号 13812345678"},
+                     {"eid": "e2", "options": ["患者姓名：张三",
+                                                "病历号：MR20240315008"]}],
+        "notes": ["住院号：ZY2024090007"],
+        "row_count": 3,
+        "truncated": False,
+        "nothing": None,
+    }
+
+    out = sanitize_structure(payload)
+    text = json.dumps(out, ensure_ascii=False)
+
+    for probe in ("13812345678", "张三", "MR20240315008", "ZY2024090007"):
+        assert probe not in text, f"清单摘要里还在泄 PII: {probe}"
+    assert out["elements"][0]["eid"] == "e1", "eid 不是 PII, 改了模型就对不上计划"
+    assert out["row_count"] == 3 and out["truncated"] is False
+    assert out["nothing"] is None, "None 不能被转成字符串"
+    assert set(out) == set(payload)
+    assert set(out["elements"][0]) == set(payload["elements"][0])
+
+
+def test_sanitize_structure_does_not_mutate_the_input():
+    payload = {"name": "13812345678"}
+
+    out = sanitize_structure(payload)
+
+    assert payload["name"] == "13812345678"
+    assert out is not payload and out["name"] != "13812345678"
+
+
+def test_sanitize_structure_is_idempotent_and_keeps_types():
+    once = sanitize_structure({"a": ("13812345678", 1), "b": [None, True]})
+
+    assert sanitize_structure(once) == once
+    assert isinstance(once["a"], tuple), "tuple 不该被悄悄换成 list"
+    assert once["b"] == [None, True]
+
+
+# ---------------------------------------------------------------------------
+# DOM 差异: 失败现场重建 (期望变化 vs 实际变化)
+# ---------------------------------------------------------------------------
+
+def test_dom_diff_reports_what_appeared_and_what_disappeared():
+    before = '<div class="el-dialog"><button>提交</button></div>'
+    after = ('<div class="el-dialog"><button>提交</button><p>保存成功</p></div>')
+
+    out = dom_diff(before, after)
+
+    assert out.startswith("## 可见文本"), "先给看得见的字(文本), 再给结构"
+    assert "+ 保存成功" in out
+    assert "## 结构" in out and "+ <p>" in out
+
+
+def test_dom_diff_names_the_text_that_changed():
+    """同一位置换字要报成"变化", 拆成一删一加模型就看不出对应关系"""
+    out = dom_diff("<div><span>加载中</span></div>",
+                   "<div><span>加载失败</span></div>")
+
+    assert "~ 加载中 -> 加载失败" in out
+
+
+def test_dom_diff_says_so_when_nothing_changed():
+    """空串在下游会被当成"没采集", 所以"没变化"也得有一句话"""
+    html = '<div><button>确定</button></div>'
+
+    assert dom_diff(html, html).startswith("未检测到可见变化")
+
+
+def test_dom_diff_caps_each_kind_and_reports_the_remainder():
+    out = dom_diff("", "".join(f"<p>行{index}</p>" for index in range(30)), limit=5)
+
+    assert "+ 行0" in out and "+ 行5" not in out
+    assert "还有 25 条新增" in out
+
+
+def test_dom_diff_redacts_because_its_output_goes_into_the_prompt():
+    before = '<div><span class="mrn">病历号：MR20240315008</span></div>'
+    after = (before[:-6] + '<p>患者姓名：李四 13812345678</p></div>')
+
+    out = dom_diff(before, after)
+
+    assert "李四" not in out and "13812345678" not in out
+    assert REDACTED in out
+    assert "李四" in dom_diff(before, after, redact=False), "关掉脱敏时才该看到原值"
+
+
+def test_dom_diff_tolerates_garbage():
+    """现场重建跑在异常路径上, 它自己不能先抛"""
+    assert dom_diff(None, None).startswith("未检测到可见变化")
+    assert "保存" in dom_diff(b"", b"<p>\xe4\xbf\x9d\xe5\xad\x98</p>")

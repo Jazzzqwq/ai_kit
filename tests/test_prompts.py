@@ -362,3 +362,50 @@ def test_a_plan_without_an_archetype_falls_back_to_the_rules():
 
 def test_the_archetype_block_never_renders_empty():
     assert PR.archetype_block("") == "## 页面原型\n(未分类)"
+
+
+# ---------------------------------------------------------------------------
+# 清单摘要出境前脱敏 (ROADMAP 1): 现场页面没有采集冻结那一道
+# ---------------------------------------------------------------------------
+
+def test_slim_inventory_redacts_pii_from_a_live_page():
+    """现场页面直接送模型: 元素文案 / 下拉选项里的手机号病历号得在这一层掉
+
+    同时锁住"功能性文案不许动" —— 把"查询"抹了, 模型就不知道点哪个按钮。
+    """
+    from test_planner import button, field, page, select
+
+    payload = page(
+        inputs=[field("e1", container="filter-bar", text="手机号 13812345678")],
+        selects=[select("s1", text="主治医师",
+                        options=["患者姓名：张三", "病历号：MR20240315008"])],
+        buttons=[button("b1", "查询", container="filter-bar")],
+    )
+
+    text = json.dumps(PR.slim_inventory(from_inventory(payload)), ensure_ascii=False)
+
+    for probe in ("13812345678", "张三", "MR20240315008"):
+        assert probe not in text, f"清单摘要里还在泄 PII: {probe}"
+    assert "查询" in text and "主治医师" in text, "脱敏不能把控件语义一起抹掉"
+    assert "e1" in text and "b1" in text, "eid 是计划的唯一引用, 一个都不能少"
+
+
+def test_golden_pages_were_frozen_clean_so_the_llm_prompt_does_not_change():
+    """黄金集冻结时已脱敏, 所以接上 sanitize 后 8 页 prompt 逐字节不变
+
+    这就是 ROADMAP 第 1 条要求的"先在黄金集上跑对比": 结论是完全一致 ——
+    接线不改变现有 --llm 的生成质量, 真正被挡住的是现场还没冻结的页面。
+    将来哪页的黄金样本里混进 PII, 这条会红: 该重新冻结, 不是放松断言。
+    """
+    from ai_kit.evaluation import golden
+    from ai_kit.utils import sanitize_structure
+
+    pages = 0
+    for case in golden.load("generator"):
+        raw = (case.get("input") or {}).get("inventory")
+        if not raw:
+            continue
+        slim = PR.slim_inventory(from_inventory(raw))
+        assert sanitize_structure(slim) == slim, f"{case['id']} 的清单摘要还有可抹的东西"
+        pages += 1
+    assert pages >= 8, "黄金集里带 inventory 的样本变少了?"

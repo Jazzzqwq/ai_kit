@@ -24,6 +24,8 @@ import time
 from string import Template
 from typing import Any, Dict, List, Optional
 
+from ai_kit.utils import REDACTED, sanitize_structure
+
 
 # ---------------------------------------------------------------------------
 # 包内依赖 (按模块全名 import, 不再猜 legacy 模块名)
@@ -102,13 +104,28 @@ def _slim_element(element: Any) -> Dict[str, Any]:
     return slim
 
 
+def _redact_rows(rows: Any) -> List[List[str]]:
+    """表格样例行 -> 只留行列形状, 里面一律抹掉
+
+    样例行就是业务数据本身 (姓名 / 手机号 / 病历号), 而且表格单元格里
+    孤零零一个"张三"没有任何字段名提示, 正则分不出它是姓名还是科室名。
+    所以这里不靠 sanitize 猜, 直接按"这些格子就是数据"抹掉; 行列形状留着,
+    模型仍能看出这张表几行几列。
+    """
+    out: List[List[str]] = []
+    for row in _as_items(rows)[:2]:
+        cells = row if isinstance(row, list) else [row]
+        out.append([REDACTED if str(cell).strip() else "" for cell in cells[:20]])
+    return out
+
+
 def _slim_table(table: Any) -> Dict[str, Any]:
-    """表格 -> 列名 + 行数 + 行内按钮 (样例行只留 2 行)"""
+    """表格 -> 列名 + 行数 + 行内按钮 (样例行只留 2 行, 且已抹值)"""
     table = _as_dict(table)
     slim = _slim_element(table)
     slim["columns"] = _as_items(table.get("columns"))
     slim["row_count"] = table.get("row_count", 0)
-    slim["sample_rows"] = _as_items(table.get("sample_rows"))[:2]
+    slim["sample_rows"] = _redact_rows(table.get("sample_rows"))
     slim["row_actions"] = [
         {"text": action.get("text"), "eid": action.get("eid")}
         for action in (_as_dict(a) for a in _as_items(table.get("row_actions"))[:8])
@@ -120,7 +137,12 @@ def slim_page_structure(inventory: Dict[str, Any], page_name: str = "",
                         max_inputs: int = 15, max_buttons: int = 20,
                         max_tables: int = 3,
                         max_selects: int = 5) -> Dict[str, Any]:
-    """采集清单 -> LLM 友好版: 按类别截断, 保留全局摘要与风险统计"""
+    """采集清单 -> LLM 友好版: 按类别截断, 保留全局摘要与风险统计
+
+    出口统一过 sanitize_structure: 元素 text / options / 弹窗正文里可能就有
+    姓名手机号。表格样例行在上面已经按"格子就是数据"抹掉了, 这里再兜一层
+    有形态的 PII (手机号 / 身份证 / 病历号)。
+    """
     inventory = _as_dict(inventory)
     slim: Dict[str, Any] = {
         "title": inventory.get("title") or page_name,
@@ -141,7 +163,7 @@ def slim_page_structure(inventory: Dict[str, Any], page_name: str = "",
     notes = _as_items(inventory.get("notes"))
     if notes:
         slim["notes"] = notes
-    return slim
+    return sanitize_structure(slim)
 
 
 def extract_po_methods(po_class_or_instance) -> str:

@@ -20,6 +20,7 @@ import pytest
 
 from ai_kit.generator import core
 from ai_kit.perception.collector import empty_inventory
+from ai_kit.utils import REDACTED
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIXTURES = os.path.join(REPO_ROOT, "ai_kit", "evaluation", "golden", "fixtures")
@@ -168,6 +169,36 @@ def test_slim_table_keeps_columns_and_row_actions():
     assert table["row_count"] == 42
     assert len(table["sample_rows"]) == 2, "样例行只留 2 行"
     assert table["row_actions"] == [{"text": "编辑", "eid": "e9"}], "行内按钮要带 eid"
+
+
+def test_slim_table_never_ships_row_cells():
+    """样例行就是业务数据本身: 只留行列形状, 格子内容一个都不出境"""
+    inventory = {"tables": [{
+        "eid": "c1", "kind": "table", "columns": ["姓名", "手机号"],
+        "row_count": 2,
+        "sample_rows": [["张三", "13812345678"], ["", "13900001111"]],
+    }]}
+
+    table = core.slim_page_structure(inventory)["tables"][0]
+    text = json.dumps(table, ensure_ascii=False)
+
+    assert table["columns"] == ["姓名", "手机号"], "列名是表头, 不是数据"
+    assert len(table["sample_rows"]) == 2, "行列形状留着, 模型要看得出几行几列"
+    assert table["sample_rows"][0] == [REDACTED, REDACTED]
+    assert table["sample_rows"][1][0] == "", "空格子还是空, 不该凭空多一个占位符"
+    assert "张三" not in text and "13812345678" not in text
+
+
+def test_slim_redacts_pii_in_visible_text_but_keeps_wording():
+    """元素文案里夹着手机号要抹掉, 但"查询"这种功能性动词必须留着"""
+    slim = core.slim_page_structure({
+        "inputs": [{"eid": "e1", "kind": "input", "text": "手机号 13812345678"}],
+        "buttons": [{"eid": "b1", "kind": "button", "text": "查询"}],
+    })
+
+    assert "13812345678" not in json.dumps(slim, ensure_ascii=False)
+    assert slim["buttons"][0]["text"] == "查询"
+    assert {row["eid"] for row in slim["inputs"] + slim["buttons"]} == {"e1", "b1"}
 
 
 def test_slim_truncates_each_kind():

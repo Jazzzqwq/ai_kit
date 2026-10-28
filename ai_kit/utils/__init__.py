@@ -2,9 +2,11 @@
 """
 通用工具
 
-    sanitize  : PII 脱敏 (手机号 / 身份证 / 姓名 / 病历号), 送 LLM 前必经
-    dom_diff  : 操作前后 DOM 差异, 用于失败现场重建 (期望变化 vs 实际变化)
-                —— 目前只有声明, 还没实现; 下面能用的只有 sanitize
+    sanitize           : PII 脱敏 (手机号 / 身份证 / 姓名 / 病历号), 送 LLM 前必经
+    sanitize_structure : 对嵌套 dict/list 里的每个字符串跑 sanitize —— 送模型的
+                         清单摘要 (slim_inventory / slim_page_structure) 走这个
+    dom_diff           : 操作前后 DOM 差异, 用于失败现场重建 (期望变化 vs 实际变化);
+                         产物是给 proposal 报告与 LLM 的文本, 所以默认已脱敏
 
 sanitize 的能力边界 (写清楚, 别当它是万能合规方案):
     - 认得出"有形态"的 PII (手机号 / 身份证) 和"有字段名提示"的 PII
@@ -17,13 +19,16 @@ sanitize 的能力边界 (写清楚, 别当它是万能合规方案):
       所以 LLM 仍能据此推选择器 —— 这也是敢在出境前默认执行的前提。
 
 纯 stdlib 正则, 无状态, 幂等 (对已脱敏文本再跑一遍结果不变)。
+dom_diff 同理: stdlib difflib, 输入两段 HTML, 输出一段可直接塞进提示词的文本。
 """
 from __future__ import annotations
 
+import difflib
+import html as _html
 import re
-from typing import Match
+from typing import Any, List, Match, Tuple
 
-__all__ = ["REDACTED", "sanitize"]
+__all__ = ["REDACTED", "sanitize", "sanitize_structure", "dom_diff"]
 
 REDACTED = "[REDACTED]"
 
@@ -172,3 +177,145 @@ def sanitize(text: str) -> str:
     out = _ID_CARD_15.sub(REDACTED, out)
     out = _PHONE.sub(REDACTED, out)
     return out
+
+
+def sanitize_structure(value: Any) -> Any:
+    """递归把结构里每个字符串过一遍 sanitize —— 给「送 LLM 的清单摘要」用
+
+    slim_inventory / slim_page_structure 的产物是嵌套 dict: 逐字符串过筛比
+    "json.dumps 完再整体跑一次"稳 —— 键名与结构原样保留, 也不会因为两段文本
+    拼接后恰好凑出手机号形状而误抹。
+
+    只递归 dict / list / tuple / str; 数字、布尔、None 原样返回 —— 行数、eid
+    编号这些不是 PII, 转成字符串反而破坏下游的类型判断。返回新对象不改入参;
+    sanitize 幂等, 所以本函数也幂等。
+    """
+    if isinstance(value, str):
+        return sanitize(value)
+    if isinstance(value, dict):
+        return {key: sanitize_structure(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return tuple(sanitize_structure(item) for item in value)
+    if isinstance(value, list):
+        return [sanitize_structure(item) for item in value]
+    return value
+
+
+# ---------------------------------------------------------------------------
+# DOM 差异 (失败现场重建)
+# ---------------------------------------------------------------------------
+#
+# 只比两样东西, 都是"用户/模型能直接看懂"的粒度:
+#   1. 可见文本行 —— 去掉标签后按块级元素断行, 反映"页面上多了/少了什么字";
+#   2. 标签签名   —— tag + role/type/name, 反映"结构多了/少了一个按钮"。
+# class 刻意不进签名: 重渲染时 class 顺序、哈希类名最吵, 一加进来 diff 全是噪声;
+# 文本行已经能反映内容变化, 不需要靠 class 再猜一遍。
+
+_SCRIPT_STYLE = re.compile(r"<(script|style)\b[^>]*>.*?</\1\s*>", re.S | re.I)
+_BLOCK_END = re.compile(
+    r"</(?:div|p|li|tr|td|th|h[1-6]|section|article|header|footer|button|label|"
+    r"option|a)\s*>|<br\s*/?>", re.I)
+_ANY_TAG = re.compile(r"<[^>]*>", re.S)
+_TAG_OPEN = re.compile(r"<([a-zA-Z][\w-]*)\b([^>]*)>", re.S)
+_ATTR = re.compile(r"([\w:-]+)\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s>]+)")
+_WHITESPACE = re.compile(r"\s+")
+# 签名里留哪些属性: role/type 决定控件性质, name 是表单字段名 (与 PII 无关)
+_SIG_ATTRS = ("role", "type", "name")
+
+
+def _as_html(value: Any) -> str:
+    """宽容取 HTML 文本: None/bytes/脏数据一律降级成空串, 这里不抛"""
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value).decode("utf-8", "replace")
+    if isinstance(value, str):
+        return value
+    return "" if value is None else str(value)
+
+
+def _visible_lines(markup: str) -> List[str]:
+    """HTML -> 可见文本行 (块级结束标签断行, 折叠空白, 丢掉空行)"""
+    text = _SCRIPT_STYLE.sub(" ", markup)      # 脚本样式里的字符串不是"看得见的"
+    text = _BLOCK_END.sub("\n", text)
+    text = _html.unescape(_ANY_TAG.sub("", text))
+    lines = (_WHITESPACE.sub(" ", row).strip() for row in text.splitlines())
+    return [row for row in lines if row]
+
+
+def _tag_signatures(markup: str) -> List[str]:
+    """HTML -> 标签签名序列: <tag role=.. type=.. name=..>"""
+    text = _SCRIPT_STYLE.sub(" ", markup)
+    out: List[str] = []
+    for match in _TAG_OPEN.finditer(text):
+        attrs = {key.lower(): raw.strip("\"'")[:20]
+                 for key, raw in _ATTR.findall(match.group(2))}
+        parts = [f"<{match.group(1).lower()}"]
+        parts += [f" {key}={attrs[key]}" for key in _SIG_ATTRS if attrs.get(key)]
+        out.append("".join(parts) + ">")
+    return out
+
+
+def _diff_sequences(before: List[str], after: List[str]
+                    ) -> Tuple[List[str], List[str], List[Tuple[str, str]]]:
+    """(新增, 消失, 变化) —— 用 difflib 的 opcodes, 变化按位配对"""
+    added: List[str] = []
+    removed: List[str] = []
+    changed: List[Tuple[str, str]] = []
+    matcher = difflib.SequenceMatcher(None, before, after, autojunk=False)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "insert":
+            added.extend(after[j1:j2])
+        elif tag == "delete":
+            removed.extend(before[i1:i2])
+        elif tag == "replace":
+            left, right = before[i1:i2], after[j1:j2]
+            for index in range(min(len(left), len(right))):
+                changed.append((left[index], right[index]))
+            removed.extend(left[len(right):])
+            added.extend(right[len(left):])
+    return added, removed, changed
+
+
+def _diff_section(title: str, added: List[str], removed: List[str],
+                  changed: List[Tuple[str, str]], limit: int) -> List[str]:
+    """一段差异 -> markdown 行; 每类最多列 limit 条, 剩下的只报条数"""
+    if not (added or removed or changed):
+        return []
+    lines = [f"## {title} (+{len(added)} -{len(removed)} ~{len(changed)})"]
+    lines += [f"+ {item}" for item in added[:limit]]
+    if len(added) > limit:
+        lines.append(f"+ ... 还有 {len(added) - limit} 条新增")
+    lines += [f"- {item}" for item in removed[:limit]]
+    if len(removed) > limit:
+        lines.append(f"- ... 还有 {len(removed) - limit} 条消失")
+    lines += [f"~ {old} -> {new}" for old, new in changed[:limit]]
+    if len(changed) > limit:
+        lines.append(f"~ ... 还有 {len(changed) - limit} 条变化")
+    return lines
+
+
+def dom_diff(before: Any, after: Any, *, limit: int = 20,
+             redact: bool = True) -> str:
+    """操作前后 DOM 的可见差异 —— 失败现场重建 (期望变化 vs 实际变化)
+
+    输入两段 HTML (通常是同一个容器操作前后的 outerHTML, 也接受纯文本),
+    输出一段可直接塞进提示词的 markdown, 分「可见文本」与「结构」两段。
+    没有变化时返回一句话说明, 不是空串 —— 空串在下游会被当成"没采集"。
+
+    redact: 默认 True。这段文本的用途就是给 proposal 报告和 LLM 重建现场,
+    属于出境点, 与 healer L4 同源, 所以在这里统一脱敏, 不指望每个调用点记得。
+
+    边界: 不比样式、不比像素、不比属性顺序; 只回答"字变了没、结构变了没"。
+    """
+    old_html, new_html = _as_html(before), _as_html(after)
+    sections: List[str] = []
+
+    old_lines, new_lines = _visible_lines(old_html), _visible_lines(new_html)
+    sections += _diff_section("可见文本", *_diff_sequences(old_lines, new_lines), limit)
+
+    old_tags, new_tags = _tag_signatures(old_html), _tag_signatures(new_html)
+    sections += _diff_section("结构", *_diff_sequences(old_tags, new_tags), limit)
+
+    if not sections:
+        return "未检测到可见变化 (文本与结构都一样)"
+    text = "\n".join(sections)
+    return sanitize(text) if redact else text

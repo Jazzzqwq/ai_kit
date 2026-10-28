@@ -36,6 +36,8 @@ import os
 import re
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
+from ai_kit.utils import sanitize_structure
+
 # 生成代码用例必须保守: 0.1 足够稳定, 再高就会出现"灵机一动"的步骤
 TEMPERATURE = 0.1
 # 显式上限: 只改没过的用例, 2000 token 够写几十条; 可用环境变量覆盖
@@ -271,6 +273,10 @@ def slim_inventory(inventory: Any, *, max_items: int = 40,
     """PageInventory -> 给模型看的清单摘要 (丢 html/定位串, 只留能决策的字段)
 
     定位串绝不给模型: 它会忍不住把 xpath 抄进 value 里, 而计划里只准有 eid。
+
+    出门前统一过 sanitize_structure: 元素可见文本 (name / options) 里可能就有
+    姓名手机号, 而这一层是唯一把所有字段汇到一起的地方 —— 在这里脱敏一次,
+    比让每个调用方自己记得脱敏可靠。
     """
     def element(spec: Any) -> Dict[str, Any]:
         row: Dict[str, Any] = {
@@ -297,7 +303,7 @@ def slim_inventory(inventory: Any, *, max_items: int = 40,
             "row_actions": [dict(action) for action in (item.get("row_actions") or ())[:8]],
         }
 
-    return {
+    return sanitize_structure({
         "url": getattr(inventory, "url", ""),
         "title": getattr(inventory, "title", ""),
         "archetype": getattr(inventory, "archetype", ""),
@@ -308,7 +314,7 @@ def slim_inventory(inventory: Any, *, max_items: int = 40,
                      "buttons": list(dialog.get("buttons") or ())}
                     for dialog in getattr(inventory, "dialogs", ())],
         "notes": list(getattr(inventory, "notes", ()) or ())[:5],
-    }
+    })
 
 
 def output_schema() -> Dict[str, Any]:

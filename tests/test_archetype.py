@@ -393,6 +393,21 @@ def test_prompt_carries_evidence_for_the_model():
     assert "只输出 JSON" in prompt
 
 
+def test_prompt_carries_no_pii_because_it_goes_to_the_llm():
+    """标题和元素名都可能带着被测页面的真数据: 出境前必须抹掉, 骨架不能抹"""
+    spy = Spy({"archetype": "detail"})
+    classify(page(title="患者详情 13812345678",
+                  inputs=[field("e1", container="filter-bar", name="姓名：张三")],
+                  buttons=[button("e3", "删除", risk="destructive")]),
+             allow_llm=True, ask=spy)
+
+    prompt = spy.calls[0]
+    for probe in ("13812345678", "张三"):
+        assert probe not in prompt, f"分类提示词里还在泄 PII: {probe}"
+    assert "e1" in prompt, "eid 是模型回话时对元素的唯一指认, 不能抹"
+    assert "filter-bar" in prompt and "risk=destructive" in prompt
+
+
 def test_confirm_with_llm_keeps_rule_scores():
     base = classify(page())
     confirmed = confirm_with_llm(base, page(), ask=Spy({"archetype": "list_crud", "confidence": 0.7}))
