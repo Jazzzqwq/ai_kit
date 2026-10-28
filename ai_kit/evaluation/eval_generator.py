@@ -6,6 +6,11 @@
   验证管道本身可运行 (报告明确标注 skeleton_mode, 不代表真实生成质量)。
 --llm: 调 generate_case_plan 产出真实清单, 三项指标才有意义, 并统计每次成本。
 
+带 input.inventory 的 case (source=collected, 真页面采集冻结) 另走感知链:
+  from_inventory -> plan -> render -> verify, 汇总 eid 解析率 / 可执行率。
+  确定性规划器"派生不出来就 skip", 离线模式解析率预期接近 100%; 活页面层无 driver
+  时进 live_skipped, 口径在报告里注明。
+
 可移植: page_structure/po_methods 来自自带 golden JSON, 不爬真实网站/不 import pages。
 """
 from __future__ import annotations
@@ -14,6 +19,8 @@ from typing import Any, Dict, List, Optional
 
 from ai_kit.generator import core as gcore
 from ai_kit.evaluation import golden, metrics, cost_tracker as _ct
+from ai_kit.perception import from_inventory, plan as pplan, render as prender
+from ai_kit.perception import resolve_ref, verify as pverify
 
 try:
     from ai_kit.generator.prompts import TEST_USER_PREFIXES
@@ -39,6 +46,36 @@ def _plan_to_text(plan: Dict[str, Any]) -> str:
             parts += [str(s) for s in case.get("steps", [])]
             parts += [str(e) for e in case.get("expected", [])]
     return "\n".join(parts)
+
+
+def _chain_case(c: Dict[str, Any]) -> Dict[str, Any]:
+    """采集冻结的 inventory -> 感知链实跑, 抽两项率的原始计数 (失败不拖垮套件)
+
+    refs 取法与 planner.verify 对齐: 全部用例 steps+cleanup 里的非空 step.eid,
+    复合引用 (c1.column:X / chart:N) 也走同一扇 resolve_ref 的门。
+    """
+    raw_inv = (c.get("input") or {}).get("inventory") or {}
+    inv = from_inventory(raw_inv)
+    p0 = pplan(inv)
+    src = prender(p0, inventory=inv)            # standalone: {case_id: 源码}, .problems 是拒收理由
+    v = pverify(p0, inventory=inv, sources=src,
+                render_problems={str(getattr(pr, "case_id", "") or ""):
+                                 [str(getattr(pr, "message", "") or pr)]
+                                 for pr in (getattr(src, "problems", ()) or ())})
+    ref_rows = [{"ref": step.eid, "resolved": resolve_ref(inv, step.eid) is not None}
+                for case in v.cases for step in (*case.steps, *case.cleanup) if step.eid]
+    case_rows = [{"id": case.case_id,
+                  "rendered": bool(src.get(case.case_id)),
+                  "needs_review": bool(case.needs_review)}
+                 for case in v.cases]
+    return {
+        "id": c["id"],
+        "n_plan_cases": len(v.cases),
+        "refs": ref_rows,
+        "cases": case_rows,
+        "live_skipped": list((v.diagnostics or {}).get("live_skipped") or ()),
+        "verify": str((v.diagnostics or {}).get("verify") or ""),
+    }
 
 
 def _one_case(c: Dict[str, Any], use_llm: bool, cost: "_ct.CostTracker") -> Dict[str, Any]:
@@ -104,7 +141,14 @@ def run(use_llm: bool = False, limit: Optional[int] = None) -> Dict[str, Any]:
 
     for c in cases:
         try:
-            rows.append(_one_case(c, use_llm, cost))
+            row = _one_case(c, use_llm, cost)
+            if (c.get("input") or {}).get("inventory"):
+                try:
+                    row["chain"] = _chain_case(c)
+                except Exception as e:  # noqa: BLE001 — 链跑不通也是读数, 记下来不装成没这条
+                    row["chain"] = {"id": c["id"], "error": str(e),
+                                    "refs": [], "cases": [], "n_plan_cases": 0}
+            rows.append(row)
         except Exception as e:  # noqa: BLE001 — 单条失败不拖垮套件
             rows.append({"id": c.get("id", "?"), "error": str(e),
                          "py_compile_pass": False,
@@ -121,6 +165,12 @@ def run(use_llm: bool = False, limit: Optional[int] = None) -> Dict[str, Any]:
     def _mean(xs):
         return round(sum(xs) / len(xs), 4) if xs else 0.0
 
+    # 感知链两项率: 只统计真跑了链的 case (带 inventory 的 collected 样本)
+    chains = [r["chain"] for r in rows if isinstance(r.get("chain"), dict)]
+    ref_rows = [x for ch in chains for x in ch.get("refs") or ()]
+    chain_case_rows = [x for ch in chains for x in ch.get("cases") or ()]
+    chain_errors = [ch for ch in chains if ch.get("error")]
+
     # 一条 case 对应一个页面 → 每页成本才有意义 (每次成本随 prompt 长短飘)
     return {
         "suite": "generator",
@@ -133,6 +183,11 @@ def run(use_llm: bool = False, limit: Optional[int] = None) -> Dict[str, Any]:
         "avg_coverage_recall": _mean(covs),
         "avg_name_collision_rate": _mean(collisions),
         "avg_step_near_dup_rate": _mean(near_dup),
+        "chain": {
+            "n_cases": len(chains),
+            "n_errors": len(chain_errors),
+            "metrics": metrics.perception_chain_metrics(ref_rows, chain_case_rows),
+        },
         "cost": cost.summary(units=len(cases)),
         "cases": rows,
     }

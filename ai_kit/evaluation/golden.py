@@ -7,7 +7,8 @@
 - module       : 这条 case 喂给哪个套件 (analyzer / healer / generator)
 - rule_version : 标注那天的规则/管道版本 (analyzer 跟 RULES_VERSION 走)。回归时先看它,
                  才说得清 "这一条是哪版规则判的"
-- source       : manual (手写) / flywheel (6.6 账本导出)。报告里 "手写 25 + 飞轮 3" 就是按它数的
+- source       : manual (手写) / flywheel (6.6 账本导出) / collected (真页面采集冻结)。
+                 报告里 "手写 25 + 飞轮 3" 就是按它数的
 - input        : 喂进去的东西 (analyzer: traceback/log[/screenshot]; healer: 夹具+坏定位器;
                  generator: 页面结构 + PO 签名)
 - expected     : 期望输出 (analyzer: category + acceptable_categories; healer: 定位器/目标元素;
@@ -39,10 +40,11 @@ FILES: Mapping[str, str] = {
     "proposal": "flywheel_negative.json",
 }
 
-# 7.2 的规模底线; generator 只有 2 条且是管道自检, 不设底线
-SCALE_FLOOR: Mapping[str, int] = {"analyzer": 30, "healer": 20}
+# 7.2 的规模底线; generator 的 8 条底线是 8 条采集冻结 case 的数量 (管道自检的 G1/G2 另算)
+SCALE_FLOOR: Mapping[str, int] = {"analyzer": 30, "healer": 20, "generator": 8}
 
-SOURCES: Sequence[str] = ("manual", "flywheel")
+# manual 手写 / flywheel 账本导出 / collected 真页面采集脱敏冻结 (collect_golden)
+SOURCES: Sequence[str] = ("manual", "flywheel", "collected")
 
 DEFAULT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden")
 

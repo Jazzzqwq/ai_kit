@@ -37,3 +37,5 @@ generated/
 decisions.jsonl
 decisions*.jsonl
 patches/
+# 采集中间产物: 含真 URL/表格裸文本, 脱敏冻结前绝不能进 git
+_collected.json

@@ -130,6 +130,28 @@ def test_proposal_decision_metrics_empty_denominators():
     assert m.proposal_decision_metrics([])["n"] == 0
 
 
+def test_perception_chain_metrics_rates():
+    """eid 解析率 = resolved/全部引用; 可执行率 = 出码且未标 review/全部用例"""
+    r = m.perception_chain_metrics(
+        [{"resolved": True}, {"resolved": True}, {"resolved": False}],
+        [{"rendered": True, "needs_review": False},
+         {"rendered": True, "needs_review": True},
+         {"rendered": False, "needs_review": False}])
+    assert r["n_refs"] == 3 and r["refs_resolved"] == 2
+    assert r["eid_parse_rate"] == round(2 / 3, 4)
+    assert r["n_cases"] == 3 and r["cases_executable"] == 1
+    assert r["executable_rate"] == round(1 / 3, 4)
+    # 出码但标了 review 不算可执行; 没出码也不算
+    assert m.perception_chain_metrics([], [{"rendered": True, "needs_review": True}])["executable_rate"] == 0.0
+
+
+def test_perception_chain_metrics_empty_denominators():
+    """没采到 inventory (分母 0): 率是 0.0, 由渲染层结合计数显 n/a, 不是假 0%"""
+    r = m.perception_chain_metrics([], [])
+    assert r["n_refs"] == 0 and r["n_cases"] == 0
+    assert r["eid_parse_rate"] == 0.0 and r["executable_rate"] == 0.0
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

@@ -219,6 +219,7 @@ def test_documented_submodules_import_with_budget_deps_only(tmp_path):
         "ai_kit.evaluation.eval_generator",
         "ai_kit.evaluation.eval_analyzer",
         "ai_kit.evaluation.eval_proposal",
+        "ai_kit.evaluation.collect_golden",
         "ai_kit.evaluation.run_eval",
         "ai_kit.generator.core",
         "ai_kit.generator.prompts",

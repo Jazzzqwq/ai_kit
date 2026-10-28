@@ -12,6 +12,7 @@
 - coverage_recall                   : 生成用例对"应覆盖场景"的召回率
 - duplication_rate                  : 生成用例重复率 (方法名碰撞 + 步骤 Jaccard 近重复)
 - proposal_decision_metrics         : 方案层人决策账本 → 接受率 / 验证成功率 (按类型分列)
+- perception_chain_metrics          : 感知链两项实跑率 → eid 解析率 / 可执行率
 """
 from __future__ import annotations
 
@@ -258,6 +259,41 @@ def proposal_decision_metrics(rows: Sequence[Mapping[str, Any]]) -> Dict[str, An
         "n": len(rows),
         "overall": _decision_bucket(list(rows)),
         "by_type": {kind: _decision_bucket(items) for kind, items in sorted(buckets.items())},
+    }
+
+
+# ---------------------------------------------------------------------------
+# 感知链实跑: eid 解析率 / 可执行率
+# ---------------------------------------------------------------------------
+
+def perception_chain_metrics(ref_rows: Sequence[Mapping[str, Any]],
+                             case_rows: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    """plan -> render -> verify 链路的两个可算率; 计数由调用方采集, 这里只算率。
+
+    ref_rows  每条形如 {resolved: bool} —— plan 里一个非空 step.eid 能否在采集清单里
+              resolve_ref 到元素 (含 cleanup; 复合 ref 如 c1.column:X 也走同一扇门)。
+    case_rows 每条形如 {rendered: bool, needs_review: bool} —— 一条用例能否出码且
+              verify 后未被标 needs_review。
+
+    口径 (写死在这里, 报告照搬):
+    - eid_parse_rate   = resolved / 全部非空 eid;
+    - executable_rate  = (出码且未标 review) / 全部用例。
+    分母为 0 返回 0.0, 由渲染层结合 n_refs/n_cases 显 n/a (没采到 inventory 时不是 0%)。
+    确定性规划器"派生不出来就 skip", 离线模式 eid 解析率预期接近 100%; 真正能打破
+    它的是 --llm 幻觉引用 —— 本期不接 LLM 感知链, 读数时要注明。
+    """
+    n_refs = len(ref_rows)
+    resolved = sum(1 for r in ref_rows if r.get("resolved"))
+    n_cases = len(case_rows)
+    executable = sum(1 for c in case_rows
+                     if c.get("rendered") and not c.get("needs_review"))
+    return {
+        "n_refs": n_refs,
+        "refs_resolved": resolved,
+        "eid_parse_rate": round(safe_div(resolved, n_refs), 4),
+        "n_cases": n_cases,
+        "cases_executable": executable,
+        "executable_rate": round(safe_div(executable, n_cases), 4),
     }
 
 

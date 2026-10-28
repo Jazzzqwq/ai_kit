@@ -79,9 +79,10 @@ schema 这一关，才允许变代码。
 
 ### 5. 评测与成本（evaluation）
 
-黄金集手写 analyzer 30 + healer 24 + generator 2 条（统一 schema，规模底线有硬断言，
-CLI 样本不够直接退出码 1），指标全是纯函数（top-k / 分层占比 / ECE / 可靠性表 /
-编译通过率 / 重复率）。成本从响应 `usage` 回填，按 model 查价目表换算元。
+黄金集 analyzer 30 + healer 24 + generator 10（手写 2 + 真页面采集脱敏冻结 8，
+统一 schema，规模底线有硬断言，CLI 样本不够直接退出码 1），指标全是纯函数（top-k /
+分层占比 / ECE / 可靠性表 / 编译通过率 / 重复率 / 感知链 eid 解析率与可执行率）。
+成本从响应 `usage` 回填，按 model 查价目表换算元。
 `run_eval` 一条命令出三套件合并报告；CI 每周一跑完把报告 commit 回仓库，git 历史
 就是指标趋势看板。账本里被采纳的修复反哺黄金集（数据飞轮），评测集随使用增长。
 除三套件外还有**套件4 方案层人决策**（`eval_proposal`）：直接读本地 `decisions.jsonl` 账本
@@ -108,7 +109,8 @@ CLI 样本不够直接退出码 1），指标全是纯函数（top-k / 分层占
 | healer | 24 | top-1 / top-3 命中 | **87.5% / 100.0%** | L4 离线恒 0 候选，是口径限制不是退化；分层 L1 25.0% / L2 66.7% / L3 8.3% |
 | analyzer | 30 | 严格 / 含容错准确 | **96.7% / 100.0%** | 平均置信 0.803 − 准确 0.967 = **-0.163 欠自信**，ECE(5箱) 0.163；唯一严格错例：定位器被判成等待（Stale 词面先命中） |
 | analyzer blame | 30 | 分类一致率 | 96.7% → 容错后 100% | 分布 test_code 17 / product 6 / environment 5 / unknown 2 |
-| generator | **2** | py_compile / 覆盖率 | 100% / 8.6% | ⚠ **n=2 骨架模式，只证明管道通，不证明生成质量**；覆盖率低是分母（业务断言）未喂 LLM 所致 |
+| generator | **10** (手写 2 + 采集冻结 8) | py_compile / 覆盖率 | 100% / 29.2% | ⚠ **骨架模式，只证明管道通，不证明生成质量**；覆盖率低是分母（业务断言）未喂 LLM 所致 |
+| generator 感知链 | **8** 条采集冻结样本 | eid 解析率 / 可执行率 | **100.0% (260/260) / 92.3% (108/117)** | 确定性规划器无幻觉，解析率预期接近 100%，真能打破它的是 --llm 引用幻觉（本期未接）；可执行率里 9 条 needs_review 全部同一原因：`set_network` 需 CDP 断网、渲染器诚实拒收；活页面层离线跳过 (live_skipped) 不影响这两项 |
 | 方案层人决策 proposal | **1** | 接受率 / 验证成功率 | 0.0% / n/a | ⚠ **n=1 仅一条 reject，样本量不足以谈比率**；验证成功率 n/a 是因 0 条被采纳（非 0%）；类型 join 认出 0 / unknown 1（本仓库未留档 report.json，宁可一桶 unknown 也不从 note 猜类型） |
 | 真实 LLM 冒烟 | 1+1 | 三条断言 | **通过** | 真调到 / usage 采到 / 价目表认识型号；总成本 ≈0.0031 元（qwen-plus），n=1 只证通路 |
 
@@ -176,7 +178,7 @@ python -m ai_kit.evaluation.run_eval                      # 离线评测出报�
 全量回归原文（2026-10-28 本机）：
 
 ```
-1096 passed, 2 warnings in 104.49s (0:01:44)
+1118 passed, 2 warnings in 87.50s (0:01:27)
 ```
 
 测试不是覆盖率装饰，架构决策靠命名成句的守门测试看住。点名三个：
@@ -201,7 +203,7 @@ CI 默认路径 0 成本；报告数字与代码口径冲突时以重跑为准�
 | `healer` L4 | 最多 3 段可见容器 `outerHTML`（每段截断 4000 字符） | **已脱敏**：拼提示词前过 `ai_kit.utils.sanitize` |
 | `analyzer` 文本 | traceback 末 2000 字符 + log 末 1000 字符 | **已脱敏**：同一函数，出境前过 `sanitize` |
 | `analyzer` 多模态 | 失败截图 base64（1 张） | **不做文本脱敏**：像素里的身份证/病历号无法用正则抹。要合规就裁切，或者不传 `screenshot_base64` |
-| 评测黄金集 | `golden/*.json` + `golden/fixtures/*.html` | 全部手写合成页，不含真实业务数据；`--llm` 跑评测时送出去的也是这些合成样本 |
+| 评测黄金集 | `golden/*.json` + `golden/fixtures/*.html` | 手写合成页；`source=collected` 的 8 条是 collector 从真页面采集后**脱敏冻结**的清单（域名换合成/表格裸文本清零/html 丢弃/sanitize+scrub，落盘前零残留扫描命中即拒写），不含真实业务数据；`--llm` 跑评测时送出去的也是这些样本 |
 | `perception` 采集 / 用例生成 | 元素清单（`text/attrs/constraints/html`） | `value` 在页面内 JS 里就换成 `[REDACTED]`（`collector.py`）；元素可见文本**未过** `sanitize`，见下方边界 |
 
 ### 脱敏做什么
@@ -233,7 +235,10 @@ CI 默认路径 0 成本；报告数字与代码口径冲突时以重跑为准�
 1. **`perception`/`generator` 可见文本接 `sanitize`** —— 会改变生成质量，先在黄金集上跑对比再合；
 2. **`utils.dom_diff`** —— 目前只有 docstring 声明、无实现，与 L4 的 DOM 差异定位是同一需求；
 3. **评测指标 v2 六项**（跨页泛化 / 自愈稳定性等）—— 报告里现在标 `—`，没跑就是没跑；
-4. **CI 真实触发验证 + 全量 `--llm` 评测** —— 本仓库当前尚未配 git remote，push 到 GitHub 后
+4. **perception 真检出 P/R**（元素该采到的采到了几成 / 采到的里有几成是真的）—— 需要人工
+   标注每页元素真值，采集一张页就要标一张，成本高；本期只上了解析率/可执行率这两个
+   无需真值的链路率，**P/R 没做，不装做能做**；
+5. **CI 真实触发验证 + 全量 `--llm` 评测** —— 本仓库当前尚未配 git remote，push 到 GitHub 后
    从 Actions 页 `Run workflow` 实触发一次冒烟；全量 `--llm`（30+24 条真调）花钱多，没顺手跑。
 
 <!-- CI 徽章: 推到 GitHub 后把 <owner>/<repo> 换成真实地址即生效
