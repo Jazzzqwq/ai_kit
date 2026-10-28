@@ -17,7 +17,7 @@ import base64
 import os
 from typing import Any, Dict, List, Optional
 
-from ai_kit.analyzer import RULES_VERSION, diagnose
+from ai_kit.analyzer import RULES_VERSION, diagnose, diagnose_with_llm
 from ai_kit.evaluation import driver_provider, golden, metrics
 from ai_kit.evaluation import cost_tracker as _ct  # t7 提供; 若无则 --llm 成本记 n/a
 from ai_kit.proposal import diagnoser as _blame
@@ -58,7 +58,11 @@ def _render_screenshot_b64(driver, fixture_name: str) -> Optional[str]:
 
 
 def _eval_mode(cases: List[Dict[str, Any]], use_llm: bool,
-               driver=None) -> Dict[str, Any]:
+               driver=None, force_llm: bool = False) -> Dict[str, Any]:
+    """force_llm: 冒烟用。diagnose() 里有"规则置信 >= 0.8 就不升级"的生产门槛,
+    黄金集第一条几乎总能被规则高分命中 —— 拿它冒烟会让 llm_calls 恒为 0,
+    把"通路是好的"误报成"通路坏了"。冒烟验的是 LLM 通路/usage/价目表三件事,
+    不是升级判断, 所以 smoke 模式直接走 Phase 2; LLM 挂了仍降级回规则。"""
     pairs: List[tuple] = []
     calib: List[tuple] = []
     tolerant_flags: List[bool] = []
@@ -76,7 +80,11 @@ def _eval_mode(cases: List[Dict[str, Any]], use_llm: bool,
         log = str(sample.get("log") or "")
         if use_llm:
             before = cost.snapshot_hook()  # 记录调用前 token 累计
-            diag = diagnose(tb, log, use_llm=True, screenshot_base64=shot)
+            if force_llm:
+                llm_diag = diagnose_with_llm(tb, log, screenshot_base64=shot)
+                diag = llm_diag if llm_diag is not None else diagnose(tb, log, use_llm=False)
+            else:
+                diag = diagnose(tb, log, use_llm=True, screenshot_base64=shot)
             cost.record_since(before)
         else:
             diag = diagnose(tb, log, use_llm=False)
@@ -181,7 +189,8 @@ def run(use_llm: bool = False, driver=None,
         include_flywheel: bool = True, limit: Optional[int] = None) -> Dict[str, Any]:
     """limit: 只跑前 N 条 (--smoke 冒烟用, 别拿它当正式评测)"""
     cases = _load_cases(include_flywheel)
-    if limit is not None and limit > 0:
+    smoke_mode = bool(limit and limit > 0)
+    if smoke_mode:
         cases = cases[:limit]
 
     # 规则模式 (始终跑, 0 成本)
@@ -205,7 +214,7 @@ def run(use_llm: bool = False, driver=None,
             driver = driver_provider.get_driver()
             own = driver
         try:
-            llm = _eval_mode(cases, use_llm=True, driver=driver)
+            llm = _eval_mode(cases, use_llm=True, driver=driver, force_llm=smoke_mode)
         finally:
             if own:
                 driver_provider.quit_driver(own)

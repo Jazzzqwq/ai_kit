@@ -152,6 +152,52 @@ def test_smoke_fails_when_the_price_table_does_not_know_the_model():
     assert R.smoke_check(report)["ok"] is False
 
 
+def test_smoke_forces_phase_2_even_when_rules_are_confident(monkeypatch):
+    """回归: 黄金集第一条被规则 0.9 高分命中, diagnose() 的生产门槛不升级 LLM,
+    llm_calls 恒为 0 —— 冒烟会把"通路是好的"误报成"通路坏了"。
+    smoke 模式必须绕过门槛直接走 Phase 2。"""
+    from ai_kit.analyzer import CATEGORY_SCRIPT_HEALER, FailureDiagnosis
+
+    calls = []
+
+    def fake_llm(tb, log, screenshot_base64=None):
+        calls.append(tb)
+        return FailureDiagnosis(category=CATEGORY_SCRIPT_HEALER, confidence=0.95,
+                                summary="fake", suggestion="fake", source="llm")
+
+    monkeypatch.setattr(eval_analyzer, "diagnose_with_llm", fake_llm)
+    monkeypatch.setattr(eval_analyzer.driver_provider, "get_driver", lambda: None)
+
+    result = eval_analyzer.run(use_llm=True, limit=1)
+
+    assert calls, "smoke 模式必须真的走到 Phase 2"
+    assert result["llm"]["cases"][0]["source"] == "llm"
+
+
+def test_non_smoke_llm_run_still_respects_the_escalation_gate(monkeypatch):
+    """门槛本身不能被拆: 非 smoke 的规则高分命中仍然不该调 LLM"""
+    calls = []
+    monkeypatch.setattr(eval_analyzer, "diagnose_with_llm",
+                        lambda tb, log, screenshot_base64=None: calls.append(tb) or None)
+    monkeypatch.setattr(eval_analyzer.driver_provider, "get_driver", lambda: None)
+
+    eval_analyzer._eval_mode(eval_analyzer._load_cases()[:1], use_llm=True,
+                             driver=None, force_llm=False)
+
+    assert not calls
+
+
+def test_smoke_falls_back_to_rules_when_the_llm_is_unavailable(monkeypatch):
+    """强制升级不等于裸奔: LLM 不可用还是要降级回规则结果"""
+    monkeypatch.setattr(eval_analyzer, "diagnose_with_llm",
+                        lambda tb, log, screenshot_base64=None: None)
+    monkeypatch.setattr(eval_analyzer.driver_provider, "get_driver", lambda: None)
+
+    result = eval_analyzer.run(use_llm=True, limit=1)
+
+    assert result["llm"]["cases"][0]["source"] == "rule"
+
+
 # ---------------------------------------------------------------------------
 # 真跑一次离线归因套件: 口径要在真数据上成立
 # ---------------------------------------------------------------------------
