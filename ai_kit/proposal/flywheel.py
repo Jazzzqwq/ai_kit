@@ -45,11 +45,15 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
 
 from ai_kit.proposal import applier
+from ai_kit.utils import sanitize_structure
 
 FLYWHEEL_VERSION = 1
 
 POSITIVE_NAME = "flywheel_positive.json"
 NEGATIVE_NAME = "flywheel_negative.json"
+
+# 黄金集是被跟踪的仓库文件, 操作人姓名不写进去: 保留"有人做过这个决定", 不保留是谁
+OPERATOR_PLACEHOLDER = "[OPERATOR]"
 
 # 默认落在包内的评测黄金集目录 (与 analyzer_cases.json 同处)
 DEFAULT_GOLDEN = Path(__file__).resolve().parents[1] / "evaluation" / "golden"
@@ -149,7 +153,7 @@ def _base_case(row: Mapping[str, Any], payload: Mapping[str, Any],
         "verify_cmd": str(proposal.get("verify_cmd") or ""),
         "failure_id": failure_id,
         "proposal_id": proposal_id,
-        "decided_by": str(row.get("operator") or ""),
+        "decided_by": OPERATOR_PLACEHOLDER if str(row.get("operator") or "").strip() else "",
         "decided_at": str(row.get("ts") or ""),
         "verify_result": str(row.get("verify_result") or ""),
     }
@@ -356,7 +360,11 @@ def write_cases(path: Any, cases: Sequence[Mapping[str, Any]], *, kind: str) -> 
 def export(decisions_path: Any = applier.DECISIONS_NAME,
            reports_target: Any = ".", *, golden: Any = DEFAULT_GOLDEN,
            since: str = "", dry_run: bool = False) -> Dict[str, Any]:
-    """导出一次: 返回摘要 (加了什么 / 跳过什么), 文件只追加不改旧条目"""
+    """导出一次: 返回摘要 (加了什么 / 跳过什么), 文件只追加不改旧条目
+
+    落盘前对新增 case 整体跑 sanitize_structure: traceback / log / diff / note 里的
+    手机号、身份证、姓名值在进被跟踪的 golden 目录前就抹掉; operator 只留占位符。
+    """
     built = build(decisions_path, reports_target, since=since)
     folder = Path(str(golden))
     positive_path = folder / POSITIVE_NAME
@@ -365,8 +373,10 @@ def export(decisions_path: Any = applier.DECISIONS_NAME,
     old_negative = load_cases(negative_path)
     known = {str(case.get("id")) for case in old_positive + old_negative}
 
-    fresh_positive = [case for case in built.positive if str(case.get("id")) not in known]
-    fresh_negative = [case for case in built.negative if str(case.get("id")) not in known]
+    fresh_positive = [sanitize_structure(case) for case in built.positive
+                      if str(case.get("id")) not in known]
+    fresh_negative = [sanitize_structure(case) for case in built.negative
+                      if str(case.get("id")) not in known]
     duplicates = (len(built.positive) + len(built.negative)
                   - len(fresh_positive) - len(fresh_negative))
 

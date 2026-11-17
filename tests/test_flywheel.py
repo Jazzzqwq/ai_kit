@@ -144,8 +144,26 @@ def test_a_verified_decision_becomes_a_positive_sample(scene):
     assert case["expected"]["type"] == "locator_patch"
     assert case["expected"]["target_file"] == "tests/test_user.py"
     assert case["expected"]["diff"] == DIFF, "正样本要带上那个被验证通过的补丁"
-    assert case["decided_by"] == "syn"
+    assert case["decided_by"] == F.OPERATOR_PLACEHOLDER
     assert case["decided_at"] == "2026-10-20T10:05:00Z"
+
+
+def test_export_scrubs_pii_before_writing_into_tracked_golden(tmp_path):
+    """导出的 golden 会进 git: 现场里的手机号/病历号/姓名值落盘前必须已抹掉"""
+    ledger = write_ledger(tmp_path / "decisions.jsonl",
+                          decision(note="联系人 13812345678"))
+    write_report(tmp_path / "reports", report_payload(
+        traceback="病历号：MR20240315008 患者姓名：张三",
+        log="电话 13812345678"))
+
+    F.export(ledger, tmp_path / "reports", golden=tmp_path / "golden")
+
+    case = golden_cases(tmp_path / "golden", F.POSITIVE_NAME)[0]
+    text = json.dumps(case, ensure_ascii=False)
+    for probe in ("13812345678", "MR20240315008", "张三"):
+        assert probe not in text
+    assert "[REDACTED]" in text
+    assert case["decided_by"] == F.OPERATOR_PLACEHOLDER
 
 
 def test_the_category_says_where_it_came_from(scene):

@@ -14,6 +14,8 @@ generator 黄金采集器 — 真页面 -> collector 清单 -> 脱敏冻结 -> �
 - 表单值 JS 侧本来就不采 (collector 硬约束); sample_rows 是表格裸文本, 清成空行;
 - url 只留路由 (域名换 https://app.invalid), title 换成 page_name;
 - 所有字符串字段过 utils.sanitize (手机号/身份证/字段名+值);
+- 系统名 (xx数据管理系统/xx平台) 与领域词 (患者/设备/治疗/医院…) 换成通用占位符,
+  覆盖 title / dialogs.text / container_summary 以及字典键, 不依赖 --scrub 是否传;
 - --scrub 传入的凭据词 (登录账号等) 一律替换成 [USER];
 - 落盘前做零残留扫描: 手机号/18 位身份证/凭据词 命中即拒绝写出。
 
@@ -69,6 +71,31 @@ RESIDUAL_PATTERNS = [
     re.compile(r"\d{17}[\dXx]"),
     re.compile(r"\d{15}"),
 ]
+
+# 业务文案擦除: 系统名/领域词一旦随 golden 入库就公开了。规则对所有字符串生效
+# (title / dialogs.text / container_summary 乃至键名都走同一个 _scrub 入口), 不依赖
+# --scrub 是否记得传 —— 那组词只负责登录账号一类凭据, 管不了系统名和业务文案。
+_SYSTEM_NAME = re.compile(
+    r"[0-9A-Za-z_\u4e00-\u9fa5·]{0,40}?(?:数据管理系统|管理系统|业务系统|管理平台)")
+_BUSINESS_WORDS = {
+    "患者姓名": "对象名称",
+    "患者": "对象", "病人": "对象", "就诊人": "对象",
+    "病历": "记录", "病案": "记录", "住院": "记录", "门诊": "记录",
+    "医院": "机构", "科室": "机构", "医师": "人员", "医生": "人员", "护士": "人员",
+    "呼吸机": "资源", "监护仪": "资源", "设备": "资源",
+    "治疗": "使用", "护理": "使用", "体检": "使用",
+    "使用看板": "统计看板",
+}
+# 长词优先: "患者姓名" 必须先于 "患者" 命中, 否则会剩下一个 "对象姓名"
+_BUSINESS_RE = re.compile(
+    "|".join(re.escape(word) for word in
+             sorted(_BUSINESS_WORDS, key=len, reverse=True)))
+
+
+def _erase_business_text(text: str) -> str:
+    """系统名换合成名、领域词换通用词; 幂等 (替换结果不再命中规则)"""
+    text = _SYSTEM_NAME.sub("示例数据管理系统", text)
+    return _BUSINESS_RE.sub(lambda m: _BUSINESS_WORDS[m.group(0)], text)
 
 
 # ---------------------------------------------------------------------------
@@ -206,23 +233,25 @@ def _collect_one(drv, spec: Dict[str, Any], origin: str,
 # ---------------------------------------------------------------------------
 
 def _scrub(value: Any, words: List[str]) -> Any:
-    """字符串先过 sanitize (手机号/身份证/字段名+值), 再替换凭据词"""
+    """字符串先过 sanitize (手机号/身份证/字段名+值), 再替换凭据词, 最后擦业务文案"""
     if isinstance(value, str):
         text = sanitize(value)
         for word in words:
             if word:
                 text = text.replace(word, USER_PLACEHOLDER)
-        return text
+        return _erase_business_text(text)
     if isinstance(value, list):
         return [_scrub(v, words) for v in value]
     if isinstance(value, dict):
-        return {k: _scrub(v, words) for k, v in value.items()}
+        # 键也过一遍: container_summary 这类字段的键同样是采集来的文案
+        return {_scrub(k, words) if isinstance(k, str) else k: _scrub(v, words)
+                for k, v in value.items()}
     return value
 
 
 def sanitize_inventory(inv: Dict[str, Any], route: str,
                        page_name: str, scrub_words: List[str]) -> Dict[str, Any]:
-    """冻结一条采集清单: 域名/标题合成化, 裸文本清空, 全字段过 sanitize"""
+    """冻结一条采集清单: 域名/标题合成化, 裸文本清空, 全字段过 sanitize + 业务文案擦除"""
     out = json.loads(json.dumps(inv, ensure_ascii=False))  # 深拷贝, 不劳烦 copy 语义之争
     out["url"] = FAKE_ORIGIN + "/" + route
     out["title"] = page_name
@@ -279,8 +308,10 @@ def _derive_expected(inv: Dict[str, Any]) -> Dict[str, List[str]]:
 
 def freeze_case(raw: Dict[str, Any], scrub_words: List[str]) -> Dict[str, Any]:
     """一次采集结果 -> 一条 generator 黄金 case"""
+    # page_name 也来自采集配置, 可能带真实系统名, 和 inventory.title 一样要擦
+    page_name = _scrub(str(raw.get("page_name") or ""), scrub_words)
     inv = sanitize_inventory(raw["inventory"], raw.get("route", ""),
-                             raw["page_name"], scrub_words)
+                             page_name, scrub_words)
     expected = _derive_expected(inv)
     return {
         "id": f"G_{raw['key']}",
@@ -288,7 +319,7 @@ def freeze_case(raw: Dict[str, Any], scrub_words: List[str]) -> Dict[str, Any]:
         "rule_version": RULE_VERSION,
         "source": "collected",
         "input": {
-            "page_name": raw["page_name"],
+            "page_name": page_name,
             "fixture_name": raw["key"],
             "po_module": raw["key"],
             "po_class": "".join(p.capitalize() for p in raw["key"].split("_")) + "Page",

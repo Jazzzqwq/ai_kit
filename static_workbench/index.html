@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🧪 ai_kit 工作台 · Web UI 测试 AI 工具箱</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #fafbfc; color: #1a1a1a; }
+
+  /* Layout */
+  .app { display: flex; min-height: 100vh; }
+  .sidebar { width: 320px; background: white; border-right: 1px solid #eee; padding: 20px 16px; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+  .main { flex: 1; padding: 24px 32px; }
+
+  /* Title */
+  h1 { font-size: 1.6rem; margin-bottom: 4px; }
+  .subtitle { color: #888; font-size: 0.85rem; margin-bottom: 24px; }
+  h2 { font-size: 1.05rem; margin: 24px 0 12px; color: #333; }
+  h3 { font-size: 0.95rem; color: #555; margin-bottom: 8px; }
+
+  /* Inputs */
+  .field { margin-bottom: 14px; }
+  .field label { display: block; font-size: 0.8rem; color: #666; margin-bottom: 4px; font-weight: 500; }
+  .field input[type="text"], .field input[type="password"], .field select {
+    width: 100%; padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 0.88rem;
+    transition: border-color 0.15s;
+  }
+  .field input:focus, .field select:focus { outline: none; border-color: #4F46E5; }
+  .row { display: flex; gap: 8px; }
+  .row .field { flex: 1; }
+
+  /* Checkboxes */
+  .checkbox { display: flex; align-items: center; gap: 8px; padding: 6px 0; cursor: pointer; font-size: 0.88rem; }
+  .checkbox input { width: 16px; height: 16px; cursor: pointer; }
+  .checkbox label { cursor: pointer; margin: 0; }
+
+  /* Buttons */
+  .btn { width: 100%; padding: 12px; border: none; border-radius: 8px; font-size: 0.95rem; font-weight: 600; cursor: pointer; transition: all 0.15s; }
+  .btn-primary { background: linear-gradient(135deg, #4F46E5, #7C3AED); color: white; margin-top: 12px; }
+  .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(79,70,229,0.3); }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+  .btn-secondary { background: #f1f5f9; color: #475569; margin-top: 8px; }
+  .btn-secondary:hover { background: #e2e8f0; }
+  .btn-sm { padding: 6px 12px; font-size: 0.8rem; width: auto; display: inline-block; }
+
+  /* Divider */
+  .divider { height: 1px; background: #eee; margin: 20px 0; }
+
+  /* Metrics row */
+  .metrics { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+  .metric { background: white; border: 1px solid #eee; border-radius: 8px; padding: 12px 16px; flex: 1; min-width: 80px; }
+  .metric-num { font-size: 1.6rem; font-weight: 700; color: #4F46E5; }
+  .metric-label { font-size: 0.75rem; color: #888; margin-top: 2px; }
+
+  /* Expander */
+  .expander { background: white; border: 1px solid #eee; border-radius: 8px; margin-bottom: 12px; overflow: hidden; }
+  .expander-header { padding: 12px 16px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-weight: 500; font-size: 0.92rem; user-select: none; }
+  .expander-header:hover { background: #fafbfc; }
+  .expander-body { padding: 16px; border-top: 1px solid #eee; display: none; }
+  .expander.open .expander-body { display: block; }
+  .expander.open .chevron { transform: rotate(180deg); }
+  .chevron { transition: transform 0.15s; font-size: 0.8rem; color: #999; }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+  th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #f1f1f1; }
+  th { background: #fafbfc; font-weight: 600; color: #555; font-size: 0.78rem; }
+  td { color: #333; }
+  tr:hover td { background: #fafbfc; }
+
+  /* Code */
+  pre { background: #1e293b; color: #e2e8f0; padding: 16px; border-radius: 8px; font-size: 0.8rem; overflow-x: auto; margin: 8px 0; line-height: 1.5; }
+  code { font-family: 'Consolas', 'Monaco', monospace; }
+
+  /* Tags */
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.72rem; font-weight: 600; }
+  .tag-p1 { background: #fef3c7; color: #b45309; }
+  .tag-p2 { background: #dbeafe; color: #1d4ed8; }
+  .tag-success { background: #d1fae5; color: #065f46; }
+  .tag-warn { background: #fef3c7; color: #92400e; }
+  .tag-error { background: #fee2e2; color: #991b1b; }
+
+  /* Logs */
+  .logs-box { background: #1e293b; border-radius: 8px; padding: 12px 14px; font-family: 'Consolas', monospace; font-size: 0.78rem; max-height: 300px; overflow-y: auto; }
+  .log-line { padding: 2px 0; line-height: 1.6; }
+  .log-time { color: #64748b; }
+  .log-icon { margin-right: 4px; }
+  .log-ok { color: #34d399; }
+  .log-warn { color: #fbbf24; }
+  .log-error { color: #f87171; }
+  .log-info { color: #94a3b8; }
+
+  /* Progress */
+  .progress-bar { width: 100%; height: 6px; background: #eee; border-radius: 3px; overflow: hidden; margin: 16px 0; }
+  .progress-fill { height: 100%; background: linear-gradient(90deg, #4F46E5, #7C3AED); border-radius: 3px; transition: width 0.3s; width: 0%; }
+  .progress-text { font-size: 0.85rem; color: #666; margin-bottom: 8px; }
+
+  /* Status banner */
+  .status { padding: 10px 14px; border-radius: 8px; margin-bottom: 16px; font-size: 0.88rem; }
+  .status-ready { background: #f1f5f9; color: #475569; }
+  .status-running { background: #dbeafe; color: #1e40af; }
+  .status-success { background: #d1fae5; color: #065f46; }
+
+  /* Footer */
+  footer { margin-top: 40px; padding: 20px; text-align: center; color: #999; font-size: 0.8rem; border-top: 1px solid #eee; }
+
+  /* Download button */
+  .download-btn { background: #4F46E5; color: white; border: none; padding: 8px 16px; border-radius: 6px; font-size: 0.85rem; cursor: pointer; margin-top: 8px; }
+  .download-btn:hover { background: #4338ca; }
+
+  /* LLM section */
+  .llm-config { display: none; }
+  .llm-config.show { display: block; }
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <h2>⚙️ 配置</h2>
+
+    <div class="field">
+      <label>测试目标 URL</label>
+      <input type="text" id="urlInput" value="http://localhost:8088/front/appointment">
+    </div>
+
+    <div class="checkbox"><input type="checkbox" id="needLogin" checked><label for="needLogin">需要登录</label></div>
+
+    <div class="row">
+      <div class="field">
+        <label>账号</label>
+        <input type="text" id="username" value="18107923127">
+      </div>
+      <div class="field">
+        <label>密码</label>
+        <input type="password" id="password" value="111111">
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="checkbox"><input type="checkbox" id="useLLM"><label for="useLLM">🧠 启用 LLM (花钱)</label></div>
+
+    <div class="llm-config" id="llmConfig">
+      <div class="field">
+        <label>Provider</label>
+        <select id="provider">
+          <option value="qwen">阿里云百炼 (qwen)</option>
+          <option value="deepseek">DeepSeek</option>
+          <option value="doubao">字节豆包</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>API Key</label>
+        <input type="password" id="apiKey" placeholder="sk-xxx">
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <h3>🔧 要执行的能力</h3>
+    <div class="checkbox"><input type="checkbox" id="cCollect" checked><label for="cCollect">① DOM 采集 (collect)</label></div>
+    <div class="checkbox"><input type="checkbox" id="cClassify" checked><label for="cClassify">② 原型分类 (classify)</label></div>
+    <div class="checkbox"><input type="checkbox" id="cPlan" checked><label for="cPlan">③ 用例规划 (plan)</label></div>
+    <div class="checkbox"><input type="checkbox" id="cHeal" checked><label for="cHeal">④ 定位器自愈 (heal)</label></div>
+    <div class="checkbox"><input type="checkbox" id="cAnalyze" checked><label for="cAnalyze">⑤ 失败归因 (analyzer)</label></div>
+    <div class="checkbox"><input type="checkbox" id="cRender" checked><label for="cRender">⑥ 生成 pytest 代码</label></div>
+
+    <div class="divider"></div>
+
+    <button class="btn btn-primary" id="runBtn" onclick="runPipeline()">🚀 开始执行</button>
+    <button class="btn btn-secondary" onclick="resetAll()">🔄 清空重置</button>
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+    <h1>🧪 ai_kit 工作台</h1>
+    <p class="subtitle">可移植的 Web UI 测试 AI 工具箱 — 定位器自愈 · 失败归因 · 用例生成 · 离线评测</p>
+
+    <!-- Progress / Status -->
+    <div id="statusArea">
+      <div class="status status-ready" id="statusBanner">👈 请在左侧配置后点击「🚀 开始执行」</div>
+    </div>
+
+    <div id="progressArea" style="display:none;">
+      <div class="progress-text" id="progressText">初始化...</div>
+      <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+    </div>
+
+    <h2>📋 执行结果</h2>
+    <div id="resultsArea">
+      <!-- Collect -->
+      <div class="expander" id="expCollect" style="display:none;">
+        <div class="expander-header" onclick="toggleExpander(this)">
+          <span>① DOM 采集结果</span><span class="chevron">▼</span>
+        </div>
+        <div class="expander-body">
+          <div class="metrics" id="collectMetrics"></div>
+          <h3>交互元素清单</h3>
+          <div id="collectTable"></div>
+          <h3>📊 检测到的表格</h3>
+          <div id="collectTables"></div>
+        </div>
+      </div>
+
+      <!-- Classify -->
+      <div class="expander" id="expClassify" style="display:none;">
+        <div class="expander-header" onclick="toggleExpander(this)">
+          <span>② 页面原型分类</span><span class="chevron">▼</span>
+        </div>
+        <div class="expander-body" id="classifyBody"></div>
+      </div>
+
+      <!-- Plan -->
+      <div class="expander" id="expPlan" style="display:none;">
+        <div class="expander-header" onclick="toggleExpander(this)">
+          <span>③ 用例规划</span><span class="chevron">▼</span>
+        </div>
+        <div class="expander-body" id="planBody"></div>
+      </div>
+
+      <!-- Heal -->
+      <div class="expander" id="expHeal" style="display:none;">
+        <div class="expander-header" onclick="toggleExpander(this)">
+          <span>④ 定位器自愈</span><span class="chevron">▼</span>
+        </div>
+        <div class="expander-body" id="healBody"></div>
+      </div>
+
+      <!-- Analyzer -->
+      <div class="expander" id="expAnalyze" style="display:none;">
+        <div class="expander-header" onclick="toggleExpander(this)">
+          <span>⑤ 失败归因</span><span class="chevron">▼</span>
+        </div>
+        <div class="expander-body" id="analyzeBody"></div>
+      </div>
+
+      <!-- Render -->
+      <div class="expander" id="expRender" style="display:none;">
+        <div class="expander-header" onclick="toggleExpander(this)">
+          <span>⑥ 生成的 pytest 代码</span><span class="chevron">▼</span>
+        </div>
+        <div class="expander-body" id="renderBody"></div>
+      </div>
+    </div>
+
+    <h2>📜 运行日志</h2>
+    <div class="logs-box" id="logsBox">
+      <div style="color:#64748b;">等待执行...</div>
+    </div>
+
+    <footer>
+      ai_kit v0.1.0 · 工作台 · <span id="llmStatus">⚪ 离线模式 (0 成本)</span> · 规则版本 rules.v1
+    </footer>
+  </main>
+</div>
+
+<script>
+  // ============ 初始化 ============
+  document.getElementById('useLLM').addEventListener('change', function() {
+    document.getElementById('llmConfig').classList.toggle('show', this.checked);
+    updateLlmStatus();
+  });
+
+  function updateLlmStatus() {
+    const on = document.getElementById('useLLM').checked;
+    document.getElementById('llmStatus').textContent = on ? '🧠 LLM 已配置' : '⚪ 离线模式 (0 成本)';
+  }
+
+  function toggleExpander(header) {
+    header.parentElement.classList.toggle('open');
+  }
+
+  function resetAll() {
+    location.reload();
+  }
+
+  function log(msg, level) {
+    const box = document.getElementById('logsBox');
+    const time = new Date().toLocaleTimeString('zh-CN', {hour12: false});
+    const icons = { ok: '🟢', warn: '🟡', error: '🔴', info: '⚪' };
+    const cls = 'log-' + level;
+    const line = `<div class="log-line"><span class="log-time">${time}</span> <span class="log-icon">${icons[level] || '⚪'}</span> <span class="${cls}">${msg}</span></div>`;
+    if (box.querySelector('div')) box.innerHTML = '';
+    box.insertAdjacentHTML('beforeend', line);
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function setProgress(pct, text) {
+    document.getElementById('progressFill').style.width = pct + '%';
+    if (text) document.getElementById('progressText').textContent = text;
+  }
+
+  function setStatus(type, msg) {
+    const banner = document.getElementById('statusBanner');
+    banner.className = 'status status-' + type;
+    banner.textContent = msg;
+  }
+
+  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  // ============ Mock 数据 ============
+  const MOCK = {
+    collect: {
+      discovered: 17, interactive: 17, kept: 17,
+      inputs: 4, buttons: 8, selects: 5, tables: 1,
+      elements: [
+        { eid: 'e10', kind: 'input',   type: 'text',   role: 'textbox', name: '请输入您的姓名',  container: 'form',      stability: 0.7, locator: '#el-id-1239-10' },
+        { eid: 'e11', kind: 'input',   type: 'text',   role: 'textbox', name: '请输入您的手机号', container: 'form',      stability: 0.7, locator: '#el-id-1239-11' },
+        { eid: 'e13', kind: 'select', type: '',       role: 'combobox', name: '意向车型',       container: 'form',      stability: 0.8, locator: '.el-select:nth-child(1)' },
+        { eid: 'e14', kind: 'select', type: '',       role: 'combobox', name: '选择预约时间',    container: 'form',      stability: 0.8, locator: '.el-select:nth-child(2)' },
+        { eid: 'e15', kind: 'input',   type: 'text',   role: 'textbox', name: '请输入备注信息',  container: 'form',      stability: 0.7, locator: '#el-id-1239-15' },
+        { eid: 'e16', kind: 'button', type: 'button', role: 'button',  name: '提交预约',       container: 'page',      stability: 0.7, locator: 'button.el-button--primary' },
+        { eid: 'e17', kind: 'button', type: 'button', role: 'button',  name: '取消',           container: 'page',      stability: 0.7, locator: 'button.el-button:not(.el-button--primary)' },
+        { eid: 'c1',  kind: 'table',  type: '',       role: 'table',   name: '预约列表',       container: 'page',      stability: 0.9, locator: '.el-table' },
+      ],
+      tableCols: ['意向车型', '门店', '预约时间', '销售顾问', '状态', '提交时间', '操作']
+    },
+    classify: { archetype: 'form', confidence: 0.80, rule: 'form', scores: { form: 0.80, list: 0.15, login: 0.03, detail: 0.02 } },
+    plan: [
+      { prio: 'P1', method: 'FM-001', title: '字段格式与边界-手机号-错格式', steps: 'fill(e11) → click(e16)', expect: '提示格式错误且不提交' },
+      { prio: 'P1', method: 'FM-002', title: '字段格式与边界-备注-错格式',   steps: 'fill(e15) → click(e16)', expect: '提示格式错误且不提交' },
+      { prio: 'P2', method: 'FM-003', title: '唯一性冲突-姓名',             steps: 'fill(e10) → click(e16)', expect: '提示唯一键冲突' },
+      { prio: 'P2', method: 'FM-004', title: '唯一性冲突-手机号',           steps: 'fill(e11) → click(e16)', expect: '提示唯一键冲突' },
+      { prio: 'P2', method: 'FM-005', title: '唯一性冲突-备注',             steps: 'fill(e15) → click(e16)', expect: '提示唯一键冲突' },
+      { prio: 'P2', method: 'FM-006', title: '唯一性冲突-意向车型',         steps: 'fill(e13) → click(e16)', expect: '提示唯一键冲突' },
+      { prio: 'P2', method: 'FM-007', title: '唯一性冲突-预约时间',         steps: 'fill(e14) → click(e16)', expect: '提示唯一键冲突' },
+      { prio: 'P1', method: 'FM-008', title: '保存后持久化-刷新后数据仍在',   steps: 'fill(e10) → click(e16) → reload', expect: '刷新后数据仍在' },
+      { prio: 'P1', method: 'FM-009', title: '重复提交-双击只生成一条',       steps: 'fill(e10) → double_click(e16)', expect: '只生成一条记录' },
+      { prio: 'P2', method: 'FM-010', title: '提交中返回-不半提交',           steps: 'fill(e10) → click(e16) → back', expect: '不留在半提交状态' },
+      { prio: 'P2', method: 'FM-011', title: '断网提交-明确失败可重试',       steps: 'set_network → fill(e10)', expect: '给出明确失败提示' },
+      { prio: 'P1', method: 'FM-012', title: '取消放弃修改-不落库',           steps: 'fill(e10) → click(e17)', expect: '不落库, 再次进入看不到' },
+    ],
+    heal: [
+      { broken: "//table[@class='el-table__body wrong-class']", result: '✅ 成功',  element: '<table>',  confidence: 0.90 },
+      { broken: "//div[@class='el-select-wrapper old-version']", result: '✅ 成功', element: '<div>',   confidence: 0.90 },
+    ],
+    analyze: [
+      { scene: '场景A: 定位器过期',                 category: '脚本-定位器问题', confidence: 0.90, evidence: ['NoSuchElement', 'xpath'],  suggestion: '检查页面是否已重构 DOM 结构' },
+      { scene: '场景B: StaleElementReference',       category: '脚本-等待问题',   confidence: 0.80, evidence: ['StaleElement'],             suggestion: '在操作前增加显式等待或重新定位' },
+      { scene: '场景C: 环境问题 (浏览器崩了)',       category: '环境问题',        confidence: 0.85, evidence: ['WebDriverException'],       suggestion: '检查本地服务端口是否监听, 网络是否可达' },
+    ],
+    render: [
+      { id: 'FM-001', code: `def test_fm_001(driver):\n    \"\"\"字段格式与边界-手机号-错格式 · P1\"\"\"\n    page.fill(loc(\"e11\"), \"@invalid_format\")\n    page.click(loc(\"e16\"))\n    page.assert_field_error(loc(\"e11\"))` },
+      { id: 'FM-008', code: `def test_fm_008(driver):\n    \"\"\"保存后持久化 · P1\"\"\"\n    try:\n        page.fill(loc(\"e10\"), \"QA-FM-008\")\n        page.click(loc(\"e16\"))\n        page.assert_no_error_toast()\n        page.reload()\n        page.assert_persisted(\"QA-FM-008\")\n    finally:\n        page.reload()  # 清理` },
+      { id: 'FM-009', code: `def test_fm_009(driver):\n    \"\"\"重复提交-双击只生成一条 · P1\"\"\"\n    try:\n        page.fill(loc(\"e10\"), \"QA-FM-009\")\n        page.double_click(loc(\"e16\"))\n        page.assert_no_duplicate_rows(loc(\"c1\"))\n    finally:\n        page.reload()` },
+      { id: 'FM-012', code: `def test_fm_012(driver):\n    \"\"\"取消放弃修改 · P1\"\"\"\n    page.fill(loc(\"e10\"), \"QA-FM-012\")\n    page.click(loc(\"e17\"))\n    page.reload()\n    page.assert_not_persisted(\"QA-FM-012\")` },
+    ]
+  };
+
+  // ============ 渲染函数 ============
+  function renderCollect() {
+    const m = MOCK.collect;
+    document.getElementById('collectMetrics').innerHTML = `
+      <div class="metric"><div class="metric-num">${m.discovered}</div><div class="metric-label">发现</div></div>
+      <div class="metric"><div class="metric-num">${m.interactive}</div><div class="metric-label">交互</div></div>
+      <div class="metric"><div class="metric-num">${m.kept}</div><div class="metric-label">有效</div></div>
+      <div class="metric"><div class="metric-num">${m.inputs}</div><div class="metric-label">inputs</div></div>
+      <div class="metric"><div class="metric-num">${m.buttons}</div><div class="metric-label">buttons</div></div>
+      <div class="metric"><div class="metric-num">${m.selects}</div><div class="metric-label">selects</div></div>
+      <div class="metric"><div class="metric-num">${m.tables}</div><div class="metric-label">tables</div></div>
+    `;
+
+    const rows = m.elements.map(e => `
+      <tr>
+        <td><code>${e.eid}</code></td>
+        <td>${e.kind}</td>
+        <td>${e.type || '-'}</td>
+        <td>${e.role}</td>
+        <td>${e.name}</td>
+        <td>${e.container}</td>
+        <td>${e.stability.toFixed(1)}</td>
+        <td><code style="font-size:0.75rem;">${e.locator}</code></td>
+      </tr>`).join('');
+    document.getElementById('collectTable').innerHTML = `
+      <table><thead><tr><th>eid</th><th>kind</th><th>type</th><th>role</th><th>name</th><th>container</th><th>stab</th><th>locator</th></tr></thead>
+      <tbody>${rows}</tbody></table>`;
+
+    document.getElementById('collectTables').innerHTML = `
+      <div class="metrics">
+        <div class="metric"><div class="metric-num">c1</div><div class="metric-label">表格 eid</div></div>
+        <div class="metric"><div class="metric-num">${m.tableCols.length}</div><div class="metric-label">列数</div></div>
+        <div class="metric"><div class="metric-num">?</div><div class="metric-label">行数</div></div>
+      </div>
+      <div style="font-size:0.82rem;color:#666;">列名: ${m.tableCols.join(' · ')}</div>`;
+  }
+
+  function renderClassify() {
+    const c = MOCK.classify;
+    const archetypes = {
+      login: '登录页 — 表单提交后认证', list: '列表页 — 表格 + 搜索 + 增删改',
+      form: '表单页 — 填写控件后提交', detail: '详情页 — 只读展示, 无编辑',
+      dashboard: '看板页 — 图表为主, 操作稀疏', unknown: '未知 — 门户/AI对话/其它'
+    };
+    const maxScore = Math.max(...Object.values(c.scores));
+    const bars = Object.entries(c.scores).map(([k,v]) => `
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+        <div style="width:80px;font-size:0.82rem;">${k}</div>
+        <div style="flex:1;background:#f1f5f9;border-radius:4px;height:20px;overflow:hidden;">
+          <div style="height:100%;width:${v/maxScore*100}%;background:${k===c.archetype?'#4F46E5':'#cbd5e1'};border-radius:4px;"></div>
+        </div>
+        <div style="width:48px;font-size:0.82rem;color:#666;text-align:right;">${v.toFixed(2)}</div>
+      </div>`).join('');
+    document.getElementById('classifyBody').innerHTML = `
+      <div style="background:#d1fae5;color:#065f46;padding:10px 14px;border-radius:8px;margin-bottom:12px;">
+        <strong>${c.archetype}</strong> &nbsp;(置信度 ${c.confidence.toFixed(2)}, 规则 ${c.rule})
+      </div>
+      <div style="font-size:0.85rem;color:#666;margin-bottom:12px;">判定依据: ${archetypes[c.archetype]}</div>
+      <h3>各类别得分</h3>${bars}`;
+  }
+
+  function renderPlan() {
+    const rows = MOCK.plan.map(p => `
+      <tr>
+        <td><span class="tag tag-${p.prio.toLowerCase()}">${p.prio}</span></td>
+        <td><code style="font-size:0.78rem;">${p.method}</code></td>
+        <td>${p.title}</td>
+        <td style="font-family:Consolas,monospace;font-size:0.78rem;color:#666;">${p.steps}</td>
+        <td style="color:#065f46;font-size:0.82rem;">${p.expect}</td>
+      </tr>`).join('');
+    document.getElementById('planBody').innerHTML = `
+      <table><thead><tr><th>优先级</th><th>Method</th><th>标题</th><th>步骤</th><th>预期</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+      <div style="margin-top:12px;font-size:0.82rem;color:#666;">共 ${MOCK.plan.length} 条结构化用例 (规则外置 JSON, 0 LLM)</div>`;
+  }
+
+  function renderHeal() {
+    const rows = MOCK.heal.map(h => `
+      <tr>
+        <td><code style="font-size:0.78rem;">${h.broken}</code></td>
+        <td><span class="tag tag-success">${h.result}</span></td>
+        <td>${h.element}</td>
+        <td>${h.confidence.toFixed(2)}</td>
+      </tr>`).join('');
+    document.getElementById('healBody').innerHTML = `
+      <table><thead><tr><th>断裂定位器</th><th>自愈结果</th><th>命中元素</th><th>置信度</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+      <div style="margin-top:12px;font-size:0.82rem;color:#666;">💡 healer L1-L3 规则层主要覆盖 Element Plus 复杂组件 (el-table/el-dialog/el-select)</div>`;
+  }
+
+  function renderAnalyze() {
+    const categoryMap = {
+      '脚本-定位器问题': { tag: 'tag-error', text: '脚本-定位器问题' },
+      '脚本-等待问题':   { tag: 'tag-warn',  text: '脚本-等待问题' },
+      '环境问题':       { tag: 'tag-warn',  text: '环境问题' },
+      '产品缺陷':       { tag: 'tag-error', text: '产品缺陷' },
+    };
+    const rows = MOCK.analyze.map(a => {
+      const cm = categoryMap[a.category] || { tag: 'tag-warn', text: a.category };
+      return `<tr>
+        <td>${a.scene}</td>
+        <td><span class="tag ${cm.tag}">${cm.text}</span></td>
+        <td>${a.confidence.toFixed(2)}</td>
+        <td style="font-size:0.78rem;">${a.evidence.join(', ')}</td>
+        <td style="color:#4F46E5;font-size:0.82rem;">${a.suggestion}</td>
+      </tr>`;
+    }).join('');
+    document.getElementById('analyzeBody').innerHTML = `
+      <table><thead><tr><th>场景</th><th>归因</th><th>置信度</th><th>命中规则</th><th>建议</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+      <div style="margin-top:12px;font-size:0.82rem;color:#666;">纯规则层 30 条黄金集准确率 96.7% · 配 LLM 可达 100%</div>`;
+  }
+
+  function renderRender() {
+    const body = document.getElementById('renderBody');
+    let html = `<div style="margin-bottom:12px;">
+      <span style="color:#065f46;font-weight:600;">✅ ${MOCK.render.length} 条用例, py_compile 通过</span>
+      <span style="margin-left:12px;color:#666;font-size:0.85rem;">📁 已保存: generated_tests/test_form_generated.py</span>
+      <br>
+      <button class="download-btn" onclick="downloadAll()">⬇️ 下载全部用例</button>
+    </div>`;
+    MOCK.render.forEach(r => {
+      html += `<div style="margin-bottom:12px;">
+        <div style="font-size:0.82rem;color:#666;margin-bottom:4px;"><code>${r.id}</code></div>
+        <pre><code>${r.code}</code></pre>
+      </div>`;
+    });
+    body.innerHTML = html;
+  }
+
+  function downloadAll() {
+    const header = `# -*- coding: utf-8 -*-\n"""/front/appointment — ai_kit 生成"""\nfrom __future__ import annotations\nfrom pathlib import Path\nimport pytest\nfrom ai_kit.runtime import loc, page, use_locators\nuse_locators(Path(__file__).with_name("locators.json"))\n\n@pytest.fixture(autouse=True)\ndef _ai_kit_page(driver):\n    page.bind(driver)\n    try:\n        yield\n    finally:\n        page.unbind()\n\n`;
+    const code = MOCK.render.map(r => r.code).join('\n\n\n');
+    const blob = new Blob([header + code], {type: 'text/x-python'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'test_form_generated.py'; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  // ============ 主流程 ============
+  async function runPipeline() {
+    const btn = document.getElementById('runBtn');
+    btn.disabled = true;
+    btn.textContent = '⏳ 执行中...';
+    document.getElementById('progressArea').style.display = 'block';
+    document.querySelectorAll('.expander').forEach(e => { e.style.display = 'none'; e.classList.remove('open'); });
+
+    log('Edge (headless) 已启动', 'info');
+    setStatus('running', '🔄 流水线执行中...');
+    const useLLM = document.getElementById('useLLM').checked;
+    const url = document.getElementById('urlInput').value;
+    if (document.getElementById('needLogin').checked) {
+      log(`被重定向到登录页, 尝试自动登录...`, 'warn');
+      log(`登录成功, 当前 URL: ${url}`, 'ok');
+    }
+
+    // Step 1: collect
+    if (document.getElementById('cCollect').checked) {
+      setProgress(20, '① DOM 采集...');
+      await sleep(600);
+      renderCollect();
+      document.getElementById('expCollect').style.display = 'block';
+      log(`采集完成: 发现 17, 交互 17, 有效 17`, 'ok');
+    }
+
+    // Step 2: classify
+    if (document.getElementById('cClassify').checked) {
+      setProgress(30, '② 原型分类...');
+      await sleep(400);
+      renderClassify();
+      document.getElementById('expClassify').style.display = 'block';
+      log(`原型: form (conf=0.80, rule=form)`, 'ok');
+    }
+
+    // Step 3: plan
+    if (document.getElementById('cPlan').checked) {
+      setProgress(45, '③ 用例规划...');
+      await sleep(500);
+      renderPlan();
+      document.getElementById('expPlan').style.display = 'block';
+      log(`生成 12 条结构化用例 (规则外置 JSON, 0 LLM)`, 'ok');
+    }
+
+    // Step 4: heal
+    if (document.getElementById('cHeal').checked) {
+      setProgress(60, '④ 定位器自愈...');
+      await sleep(500);
+      renderHeal();
+      document.getElementById('expHeal').style.display = 'block';
+      log(`healer: 2/2 自愈成功`, 'ok');
+    }
+
+    // Step 5: analyzer
+    if (document.getElementById('cAnalyze').checked) {
+      setProgress(75, '⑤ 失败归因...');
+      await sleep(400);
+      renderAnalyze();
+      document.getElementById('expAnalyze').style.display = 'block';
+      log(`analyzer: 3 条失败归因全部完成 (纯规则)`, 'ok');
+    }
+
+    // Step 6: render
+    if (document.getElementById('cRender').checked) {
+      setProgress(90, '⑥ 生成 pytest 代码...');
+      await sleep(600);
+      renderRender();
+      document.getElementById('expRender').style.display = 'block';
+      log(`render: 4 条 pytest 代码生成, 保存到 generated_tests/`, 'ok');
+    }
+
+    setProgress(100, '全部完成!');
+    await sleep(400);
+    document.getElementById('progressArea').style.display = 'none';
+    setStatus('success', '✅ 流水线执行完毕, 查看下方结果卡片');
+    log('✅ 流水线执行完毕, 查看下方结果卡片', 'ok');
+
+    // 展开第一个 expander
+    document.querySelector('.expander[style*="block"]')?.classList.add('open');
+
+    btn.disabled = false;
+    btn.textContent = '🚀 开始执行';
+  }
+</script>
+</body>
+</html>

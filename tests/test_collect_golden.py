@@ -4,6 +4,7 @@
 
 冻结环节的承诺全部在这里固化:
 - 域名/标题合成化, html 丢弃, 表格裸文本清零 (结构 row_count/columns 保留);
+- 系统名/领域词等业务文案替换为占位符 (title/dialogs.text/container_summary 及键名);
 - sanitize + --scrub 凭据词; 落盘前零残留扫描命中即拒写;
 - 手写 case 一个字不动; collected 是合法 source; generator 底线 >= 8。
 """
@@ -104,6 +105,27 @@ def test_sanitize_inventory_strips_every_pii_channel():
 # ---------------------------------------------------------------------------
 # freeze_case: 合成出的 case 必须是合法 golden, 期望值从结构推导
 # ---------------------------------------------------------------------------
+
+def test_freeze_erases_business_text_channels():
+    """系统名/领域词不能随 title、弹窗文案或 container_summary 混进被跟踪的 golden"""
+    page = _fake_page()
+    page["page_name"] = "SynCloud数据管理系统"
+    page["inventory"]["title"] = "SynCloud数据管理系统"
+    page["inventory"]["container_summary"] = {"设备管理": 1, "page": 2}
+    page["inventory"]["dialogs"] = [{
+        "eid": "d1", "selector": ".el-dialog",
+        "text": "新增记录患者姓名0 / 50使用设备请选择设备使用类型中午调压呼吸机治疗开始治疗",
+        "buttons": ["确定", "取消"]}]
+
+    case = cg.freeze_case(page, [])
+
+    text = json.dumps(case, ensure_ascii=False)
+    for probe in ("SynCloud", "患者", "呼吸机", "治疗", "设备"):
+        assert probe not in text
+    assert case["input"]["page_name"] == "示例数据管理系统"
+    assert case["input"]["inventory"]["title"] == "示例数据管理系统"
+    assert case["input"]["inventory"]["container_summary"] == {"资源管理": 1, "page": 2}
+
 
 def test_freeze_case_is_valid_golden_and_derives_expected():
     case = cg.freeze_case(_fake_page(), [HOSPITAL])

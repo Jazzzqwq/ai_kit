@@ -104,7 +104,7 @@
           "inputs": [
             {
               "name": "patient_name",
-              "placeholder": "患者姓名",
+              "placeholder": "对象名称",
               "type": "text",
               "required": false
             },
@@ -116,7 +116,7 @@
             },
             {
               "name": "device_id",
-              "placeholder": "设备ID",
+              "placeholder": "资源ID",
               "type": "text",
               "required": false
             }
@@ -135,9 +135,9 @@
             {
               "class": "el-table",
               "headers": [
-                "患者姓名",
+                "对象名称",
                 "性别",
-                "设备ID",
+                "资源ID",
                 "使用类型",
                 "时间"
               ]
@@ -178,16 +178,16 @@
       "rule_version": "generator.v2",
       "source": "collected",
       "input": {
-        "page_name": "使用看板",
+        "page_name": "统计看板",
         "fixture_name": "board",
         "po_module": "board",
         "po_class": "BoardPage",
         "po_methods": "",
         "inventory": {
           "collector_version": 1,
-          "page_name": "使用看板",
+          "page_name": "统计看板",
           "url": "https://app.invalid/#/usage/board",
-          "title": "使用看板",
+          "title": "统计看板",
           "ready_state": "complete",
           "viewport": {
             "width": 756,
@@ -213,7 +213,7 @@
             {
               "eid": "d1",
               "selector": "[class*=drawer]",
-              "text": "SynCloud数据管理系统设备管理设备列表设备使用管理使用看板历史记录系统管理",
+              "text": "示例数据管理系统资源管理资源列表资源使用管理统计看板历史记录系统管理",
               "buttons": []
             }
           ],
@@ -241,7 +241,7 @@
                 "type": "text",
                 "autocomplete": "off",
                 "tabindex": "0",
-                "placeholder": "请输入患者姓名",
+                "placeholder": "请输入对象名称",
                 "id": "el-id-6795-29"
               },
               "aria": {},
@@ -342,7 +342,7 @@
               "tag": "li",
               "type": "",
               "role": "menuitem",
-              "text": "设备管理设备列表",
+              "text": "资源管理资源列表",
               "name": "",
               "attrs": {
                 "class": "el-sub-menu is-opened",
@@ -369,7 +369,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//li[normalize-space()=\"设备管理设备列表\"]",
+                  "value": "//li[normalize-space()=\"资源管理资源列表\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -387,7 +387,7 @@
               "tag": "li",
               "type": "",
               "role": "menuitem",
-              "text": "设备列表",
+              "text": "资源列表",
               "name": "",
               "attrs": {
                 "class": "el-menu-item",
@@ -412,7 +412,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//li[normalize-space()=\"设备列表\"]",
+                  "value": "//li[normalize-space()=\"资源列表\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -430,7 +430,7 @@
               "tag": "li",
               "type": "",
               "role": "menuitem",
-              "text": "设备使用管理使用看板历史记录",
+              "text": "资源使用管理统计看板历史记录",
               "name": "",
               "attrs": {
                 "class": "el-sub-menu is-active is-opened",
@@ -457,7 +457,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//li[normalize-space()=\"设备使用管理使用看板历史记录\"]",
+                  "value": "//li[normalize-space()=\"资源使用管理统计看板历史记录\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -475,7 +475,7 @@
               "tag": "li",
               "type": "",
               "role": "menuitem",
-              "text": "使用看板",
+              "text": "统计看板",
               "name": "",
               "attrs": {
                 "class": "el-menu-item is-active",
@@ -500,7 +500,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//li[normalize-space()=\"使用看板\"]",
+                  "value": "//li[normalize-space()=\"统计看板\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -1202,7 +1202,7 @@
               "tag": "button",
               "type": "button",
               "role": "button",
-              "text": "结束治疗",
+              "text": "结束使用",
               "name": "",
               "attrs": {
                 "aria-disabled": "false",
@@ -1229,7 +1229,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//button[normalize-space()=\"结束治疗\"]",
+                  "value": "//button[normalize-space()=\"结束使用\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -1473,7 +1473,7 @@
               "tag": "button",
               "type": "button",
               "role": "button",
-              "text": "结束治疗",
+              "text": "结束使用",
               "name": "",
               "attrs": {
                 "aria-disabled": "false",
@@ -1500,7 +1500,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//button[normalize-space()=\"结束治疗\"]",
+                  "value": "//button[normalize-space()=\"结束使用\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -1745,7 +1745,7 @@
               "tag": "button",
               "type": "button",
               "role": "button",
-              "text": "结束治疗",
+              "text": "结束使用",
               "name": "",
               "attrs": {
                 "aria-disabled": "true",
@@ -1773,7 +1773,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//button[normalize-space()=\"结束治疗\"]",
+                  "value": "//button[normalize-space()=\"结束使用\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -2017,7 +2017,7 @@
               "tag": "button",
               "type": "button",
               "role": "button",
-              "text": "结束治疗",
+              "text": "结束使用",
               "name": "",
               "attrs": {
                 "aria-disabled": "false",
@@ -2044,7 +2044,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//button[normalize-space()=\"结束治疗\"]",
+                  "value": "//button[normalize-space()=\"结束使用\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -2288,7 +2288,7 @@
               "tag": "button",
               "type": "button",
               "role": "button",
-              "text": "结束治疗",
+              "text": "结束使用",
               "name": "",
               "attrs": {
                 "aria-disabled": "false",
@@ -2315,7 +2315,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//button[normalize-space()=\"结束治疗\"]",
+                  "value": "//button[normalize-space()=\"结束使用\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -2558,7 +2558,7 @@
               "tag": "button",
               "type": "button",
               "role": "button",
-              "text": "结束治疗",
+              "text": "结束使用",
               "name": "",
               "attrs": {
                 "aria-disabled": "false",
@@ -2585,7 +2585,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//button[normalize-space()=\"结束治疗\"]",
+                  "value": "//button[normalize-space()=\"结束使用\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -2829,7 +2829,7 @@
               "tag": "button",
               "type": "button",
               "role": "button",
-              "text": "结束治疗",
+              "text": "结束使用",
               "name": "",
               "attrs": {
                 "aria-disabled": "false",
@@ -2856,7 +2856,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//button[normalize-space()=\"结束治疗\"]",
+                  "value": "//button[normalize-space()=\"结束使用\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -3100,7 +3100,7 @@
               "tag": "button",
               "type": "button",
               "role": "button",
-              "text": "结束治疗",
+              "text": "结束使用",
               "name": "",
               "attrs": {
                 "aria-disabled": "false",
@@ -3127,7 +3127,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//button[normalize-space()=\"结束治疗\"]",
+                  "value": "//button[normalize-space()=\"结束使用\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -3316,7 +3316,7 @@
             {
               "eid": "d1",
               "selector": ".el-dialog",
-              "text": "新增记录患者姓名0 / 50使用设备请选择设备使用类型中午调压呼吸机治疗开始治疗",
+              "text": "新增记录对象名称0 / 50使用资源请选择资源使用类型中午示例资源使用开始使用",
               "buttons": [
                 "重置",
                 "确认"
@@ -3325,7 +3325,7 @@
             {
               "eid": "d2",
               "selector": "[class*=drawer]",
-              "text": "SynCloud数据管理系统设备管理设备列表设备使用管理使用看板历史记录系统管理",
+              "text": "示例数据管理系统资源管理资源列表资源使用管理统计看板历史记录系统管理",
               "buttons": []
             }
           ],
@@ -3353,7 +3353,7 @@
                 "type": "text",
                 "autocomplete": "off",
                 "tabindex": "0",
-                "placeholder": "请输入患者姓名",
+                "placeholder": "请输入对象名称",
                 "id": "el-id-6795-29"
               },
               "aria": {},
@@ -3460,7 +3460,7 @@
                 "type": "text",
                 "autocomplete": "off",
                 "tabindex": "0",
-                "placeholder": "请输入患者姓名",
+                "placeholder": "请输入对象名称",
                 "id": "el-id-6795-87"
               },
               "aria": {},
@@ -3893,7 +3893,7 @@
               "tag": "li",
               "type": "",
               "role": "menuitem",
-              "text": "设备管理设备列表",
+              "text": "资源管理资源列表",
               "name": "",
               "attrs": {
                 "class": "el-sub-menu is-opened",
@@ -3920,7 +3920,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//li[normalize-space()=\"设备管理设备列表\"]",
+                  "value": "//li[normalize-space()=\"资源管理资源列表\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -3938,7 +3938,7 @@
               "tag": "li",
               "type": "",
               "role": "menuitem",
-              "text": "设备列表",
+              "text": "资源列表",
               "name": "",
               "attrs": {
                 "class": "el-menu-item",
@@ -3963,7 +3963,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//li[normalize-space()=\"设备列表\"]",
+                  "value": "//li[normalize-space()=\"资源列表\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -3981,7 +3981,7 @@
               "tag": "li",
               "type": "",
               "role": "menuitem",
-              "text": "设备使用管理使用看板历史记录",
+              "text": "资源使用管理统计看板历史记录",
               "name": "",
               "attrs": {
                 "class": "el-sub-menu is-active is-opened",
@@ -4008,7 +4008,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//li[normalize-space()=\"设备使用管理使用看板历史记录\"]",
+                  "value": "//li[normalize-space()=\"资源使用管理统计看板历史记录\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -4026,7 +4026,7 @@
               "tag": "li",
               "type": "",
               "role": "menuitem",
-              "text": "使用看板",
+              "text": "统计看板",
               "name": "",
               "attrs": {
                 "class": "el-menu-item is-active",
@@ -4051,7 +4051,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//li[normalize-space()=\"使用看板\"]",
+                  "value": "//li[normalize-space()=\"统计看板\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -4753,7 +4753,7 @@
               "tag": "button",
               "type": "button",
               "role": "button",
-              "text": "结束治疗",
+              "text": "结束使用",
               "name": "",
               "attrs": {
                 "aria-disabled": "false",
@@ -4780,7 +4780,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//button[normalize-space()=\"结束治疗\"]",
+                  "value": "//button[normalize-space()=\"结束使用\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -5024,7 +5024,7 @@
               "tag": "button",
               "type": "button",
               "role": "button",
-              "text": "结束治疗",
+              "text": "结束使用",
               "name": "",
               "attrs": {
                 "aria-disabled": "false",
@@ -5051,7 +5051,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//button[normalize-space()=\"结束治疗\"]",
+                  "value": "//button[normalize-space()=\"结束使用\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -5296,7 +5296,7 @@
               "tag": "button",
               "type": "button",
               "role": "button",
-              "text": "结束治疗",
+              "text": "结束使用",
               "name": "",
               "attrs": {
                 "aria-disabled": "true",
@@ -5324,7 +5324,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//button[normalize-space()=\"结束治疗\"]",
+                  "value": "//button[normalize-space()=\"结束使用\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -5568,7 +5568,7 @@
               "tag": "button",
               "type": "button",
               "role": "button",
-              "text": "结束治疗",
+              "text": "结束使用",
               "name": "",
               "attrs": {
                 "aria-disabled": "false",
@@ -5595,7 +5595,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//button[normalize-space()=\"结束治疗\"]",
+                  "value": "//button[normalize-space()=\"结束使用\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -5839,7 +5839,7 @@
               "tag": "button",
               "type": "button",
               "role": "button",
-              "text": "结束治疗",
+              "text": "结束使用",
               "name": "",
               "attrs": {
                 "aria-disabled": "false",
@@ -5866,7 +5866,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//button[normalize-space()=\"结束治疗\"]",
+                  "value": "//button[normalize-space()=\"结束使用\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -6109,7 +6109,7 @@
               "tag": "button",
               "type": "button",
               "role": "button",
-              "text": "结束治疗",
+              "text": "结束使用",
               "name": "",
               "attrs": {
                 "aria-disabled": "false",
@@ -6136,7 +6136,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//button[normalize-space()=\"结束治疗\"]",
+                  "value": "//button[normalize-space()=\"结束使用\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -6380,7 +6380,7 @@
               "tag": "button",
               "type": "button",
               "role": "button",
-              "text": "结束治疗",
+              "text": "结束使用",
               "name": "",
               "attrs": {
                 "aria-disabled": "false",
@@ -6407,7 +6407,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//button[normalize-space()=\"结束治疗\"]",
+                  "value": "//button[normalize-space()=\"结束使用\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -6651,7 +6651,7 @@
               "tag": "button",
               "type": "button",
               "role": "button",
-              "text": "结束治疗",
+              "text": "结束使用",
               "name": "",
               "attrs": {
                 "aria-disabled": "false",
@@ -6678,7 +6678,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//button[normalize-space()=\"结束治疗\"]",
+                  "value": "//button[normalize-space()=\"结束使用\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -6938,7 +6938,7 @@
               "tag": "div",
               "type": "",
               "role": "",
-              "text": "请选择设备",
+              "text": "请选择资源",
               "name": "",
               "attrs": {
                 "class": "el-select"
@@ -6961,7 +6961,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//div[normalize-space()=\"请选择设备\"]",
+                  "value": "//div[normalize-space()=\"请选择资源\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -7355,16 +7355,16 @@
       "rule_version": "generator.v2",
       "source": "collected",
       "input": {
-        "page_name": "设备列表",
+        "page_name": "资源列表",
         "fixture_name": "device",
         "po_module": "device",
         "po_class": "DevicePage",
         "po_methods": "",
         "inventory": {
           "collector_version": 1,
-          "page_name": "设备列表",
+          "page_name": "资源列表",
           "url": "https://app.invalid/#/device",
-          "title": "设备列表",
+          "title": "资源列表",
           "ready_state": "complete",
           "viewport": {
             "width": 756,
@@ -7400,7 +7400,7 @@
             {
               "eid": "d2",
               "selector": "[class*=drawer]",
-              "text": "SynCloud数据管理系统设备管理设备列表设备使用管理使用看板历史记录系统管理",
+              "text": "示例数据管理系统资源管理资源列表资源使用管理统计看板历史记录系统管理",
               "buttons": []
             }
           ],
@@ -7639,7 +7639,7 @@
               "tag": "li",
               "type": "",
               "role": "menuitem",
-              "text": "设备管理设备列表",
+              "text": "资源管理资源列表",
               "name": "",
               "attrs": {
                 "class": "el-sub-menu is-opened",
@@ -7666,7 +7666,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//li[normalize-space()=\"设备管理设备列表\"]",
+                  "value": "//li[normalize-space()=\"资源管理资源列表\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -7684,7 +7684,7 @@
               "tag": "li",
               "type": "",
               "role": "menuitem",
-              "text": "设备列表",
+              "text": "资源列表",
               "name": "",
               "attrs": {
                 "class": "el-menu-item",
@@ -7709,7 +7709,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//li[normalize-space()=\"设备列表\"]",
+                  "value": "//li[normalize-space()=\"资源列表\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -7727,7 +7727,7 @@
               "tag": "li",
               "type": "",
               "role": "menuitem",
-              "text": "设备使用管理使用看板历史记录",
+              "text": "资源使用管理统计看板历史记录",
               "name": "",
               "attrs": {
                 "class": "el-sub-menu is-opened",
@@ -7754,7 +7754,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//li[normalize-space()=\"设备使用管理使用看板历史记录\"]",
+                  "value": "//li[normalize-space()=\"资源使用管理统计看板历史记录\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -7772,7 +7772,7 @@
               "tag": "li",
               "type": "",
               "role": "menuitem",
-              "text": "使用看板",
+              "text": "统计看板",
               "name": "",
               "attrs": {
                 "class": "el-menu-item",
@@ -7797,7 +7797,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//li[normalize-space()=\"使用看板\"]",
+                  "value": "//li[normalize-space()=\"统计看板\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -8850,7 +8850,7 @@
             {
               "eid": "d2",
               "selector": "[class*=drawer]",
-              "text": "SynCloud数据管理系统设备管理设备列表设备使用管理使用看板历史记录系统管理",
+              "text": "示例数据管理系统资源管理资源列表资源使用管理统计看板历史记录系统管理",
               "buttons": []
             }
           ],
@@ -9089,7 +9089,7 @@
               "tag": "li",
               "type": "",
               "role": "menuitem",
-              "text": "设备管理设备列表",
+              "text": "资源管理资源列表",
               "name": "",
               "attrs": {
                 "class": "el-sub-menu is-opened",
@@ -9116,7 +9116,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//li[normalize-space()=\"设备管理设备列表\"]",
+                  "value": "//li[normalize-space()=\"资源管理资源列表\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -9134,7 +9134,7 @@
               "tag": "li",
               "type": "",
               "role": "menuitem",
-              "text": "设备列表",
+              "text": "资源列表",
               "name": "",
               "attrs": {
                 "class": "el-menu-item",
@@ -9159,7 +9159,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//li[normalize-space()=\"设备列表\"]",
+                  "value": "//li[normalize-space()=\"资源列表\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -9177,7 +9177,7 @@
               "tag": "li",
               "type": "",
               "role": "menuitem",
-              "text": "设备使用管理使用看板历史记录",
+              "text": "资源使用管理统计看板历史记录",
               "name": "",
               "attrs": {
                 "class": "el-sub-menu is-opened",
@@ -9204,7 +9204,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//li[normalize-space()=\"设备使用管理使用看板历史记录\"]",
+                  "value": "//li[normalize-space()=\"资源使用管理统计看板历史记录\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -9222,7 +9222,7 @@
               "tag": "li",
               "type": "",
               "role": "menuitem",
-              "text": "使用看板",
+              "text": "统计看板",
               "name": "",
               "attrs": {
                 "class": "el-menu-item",
@@ -9247,7 +9247,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//li[normalize-space()=\"使用看板\"]",
+                  "value": "//li[normalize-space()=\"统计看板\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -10507,7 +10507,7 @@
             {
               "eid": "d1",
               "selector": "[class*=drawer]",
-              "text": "SynCloud数据管理系统设备管理设备列表设备使用管理使用看板历史记录系统管理",
+              "text": "示例数据管理系统资源管理资源列表资源使用管理统计看板历史记录系统管理",
               "buttons": []
             }
           ],
@@ -10583,7 +10583,7 @@
               "tag": "li",
               "type": "",
               "role": "menuitem",
-              "text": "设备管理设备列表",
+              "text": "资源管理资源列表",
               "name": "",
               "attrs": {
                 "class": "el-sub-menu is-opened",
@@ -10610,7 +10610,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//li[normalize-space()=\"设备管理设备列表\"]",
+                  "value": "//li[normalize-space()=\"资源管理资源列表\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -10628,7 +10628,7 @@
               "tag": "li",
               "type": "",
               "role": "menuitem",
-              "text": "设备列表",
+              "text": "资源列表",
               "name": "",
               "attrs": {
                 "class": "el-menu-item",
@@ -10653,7 +10653,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//li[normalize-space()=\"设备列表\"]",
+                  "value": "//li[normalize-space()=\"资源列表\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -10671,7 +10671,7 @@
               "tag": "li",
               "type": "",
               "role": "menuitem",
-              "text": "设备使用管理使用看板历史记录",
+              "text": "资源使用管理统计看板历史记录",
               "name": "",
               "attrs": {
                 "class": "el-sub-menu is-opened",
@@ -10698,7 +10698,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//li[normalize-space()=\"设备使用管理使用看板历史记录\"]",
+                  "value": "//li[normalize-space()=\"资源使用管理统计看板历史记录\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -10716,7 +10716,7 @@
               "tag": "li",
               "type": "",
               "role": "menuitem",
-              "text": "使用看板",
+              "text": "统计看板",
               "name": "",
               "attrs": {
                 "class": "el-menu-item",
@@ -10741,7 +10741,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//li[normalize-space()=\"使用看板\"]",
+                  "value": "//li[normalize-space()=\"统计看板\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -11657,7 +11657,7 @@
             {
               "eid": "d2",
               "selector": "[class*=drawer]",
-              "text": "SynCloud数据管理系统设备管理设备列表设备使用管理使用看板历史记录系统管理",
+              "text": "示例数据管理系统资源管理资源列表资源使用管理统计看板历史记录系统管理",
               "buttons": []
             }
           ],
@@ -11896,7 +11896,7 @@
               "tag": "li",
               "type": "",
               "role": "menuitem",
-              "text": "设备管理设备列表",
+              "text": "资源管理资源列表",
               "name": "",
               "attrs": {
                 "class": "el-sub-menu is-opened",
@@ -11923,7 +11923,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//li[normalize-space()=\"设备管理设备列表\"]",
+                  "value": "//li[normalize-space()=\"资源管理资源列表\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -11941,7 +11941,7 @@
               "tag": "li",
               "type": "",
               "role": "menuitem",
-              "text": "设备列表",
+              "text": "资源列表",
               "name": "",
               "attrs": {
                 "class": "el-menu-item",
@@ -11966,7 +11966,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//li[normalize-space()=\"设备列表\"]",
+                  "value": "//li[normalize-space()=\"资源列表\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -11984,7 +11984,7 @@
               "tag": "li",
               "type": "",
               "role": "menuitem",
-              "text": "设备使用管理使用看板历史记录",
+              "text": "资源使用管理统计看板历史记录",
               "name": "",
               "attrs": {
                 "class": "el-sub-menu is-opened",
@@ -12011,7 +12011,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//li[normalize-space()=\"设备使用管理使用看板历史记录\"]",
+                  "value": "//li[normalize-space()=\"资源使用管理统计看板历史记录\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -12029,7 +12029,7 @@
               "tag": "li",
               "type": "",
               "role": "menuitem",
-              "text": "使用看板",
+              "text": "统计看板",
               "name": "",
               "attrs": {
                 "class": "el-menu-item",
@@ -12054,7 +12054,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//li[normalize-space()=\"使用看板\"]",
+                  "value": "//li[normalize-space()=\"统计看板\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -13107,7 +13107,7 @@
             {
               "eid": "d2",
               "selector": "[class*=drawer]",
-              "text": "SynCloud数据管理系统设备管理设备列表设备使用管理使用看板历史记录系统管理",
+              "text": "示例数据管理系统资源管理资源列表资源使用管理统计看板历史记录系统管理",
               "buttons": []
             }
           ],
@@ -13346,7 +13346,7 @@
               "tag": "li",
               "type": "",
               "role": "menuitem",
-              "text": "设备管理设备列表",
+              "text": "资源管理资源列表",
               "name": "",
               "attrs": {
                 "class": "el-sub-menu is-opened",
@@ -13373,7 +13373,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//li[normalize-space()=\"设备管理设备列表\"]",
+                  "value": "//li[normalize-space()=\"资源管理资源列表\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -13391,7 +13391,7 @@
               "tag": "li",
               "type": "",
               "role": "menuitem",
-              "text": "设备列表",
+              "text": "资源列表",
               "name": "",
               "attrs": {
                 "class": "el-menu-item",
@@ -13416,7 +13416,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//li[normalize-space()=\"设备列表\"]",
+                  "value": "//li[normalize-space()=\"资源列表\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -13434,7 +13434,7 @@
               "tag": "li",
               "type": "",
               "role": "menuitem",
-              "text": "设备使用管理使用看板历史记录",
+              "text": "资源使用管理统计看板历史记录",
               "name": "",
               "attrs": {
                 "class": "el-sub-menu is-opened",
@@ -13461,7 +13461,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//li[normalize-space()=\"设备使用管理使用看板历史记录\"]",
+                  "value": "//li[normalize-space()=\"资源使用管理统计看板历史记录\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }
@@ -13479,7 +13479,7 @@
               "tag": "li",
               "type": "",
               "role": "menuitem",
-              "text": "使用看板",
+              "text": "统计看板",
               "name": "",
               "attrs": {
                 "class": "el-menu-item",
@@ -13504,7 +13504,7 @@
                 },
                 {
                   "by": "xpath",
-                  "value": "//li[normalize-space()=\"使用看板\"]",
+                  "value": "//li[normalize-space()=\"统计看板\"]",
                   "stability": 0.4,
                   "strategy": "text"
                 }

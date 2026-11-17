@@ -337,7 +337,7 @@ CI 默认路径 0 成本；报告数字与代码口径冲突时以重跑为准�
 | `proposal` 归因 / 方案 | 用例标识 + traceback + 日志 + 页面快照 + 执行步骤；改目标文件与候选定位串 | **已脱敏**：两处 `_llm_user` 出口过 `sanitize`（定位串与文件名不碰） |
 | `dom_diff` | 操作前后可见文本行 + 标签签名（tag/role/type/name，**不含 class**） | **默认脱敏**：`redact=True`，产物进报告与提示词；无变化时返回一句说明而不是空串 |
 | `analyzer` 多模态 | 失败截图 base64（1 张） | **不做文本脱敏**：像素里的身份证/病历号无法用正则抹。要合规就裁切，或者不传 `screenshot_base64` |
-| 评测黄金集 | `golden/*.json` + `golden/fixtures/*.html` | 手写合成页；`source=collected` 的 8 条是 collector 从真页面采集后**脱敏冻结**的清单（域名换合成/表格裸文本清零/html 丢弃/sanitize+scrub，落盘前零残留扫描命中即拒写），不含真实业务数据；`--llm` 跑评测时送出去的也是这些样本 |
+| 评测黄金集 | `golden/*.json` + `golden/fixtures/*.html` | 手写合成页；`source=collected` 的 8 条是 collector 从真页面采集后**脱敏冻结**的清单（域名换合成/表格裸文本清零/html 丢弃/sanitize+scrub/系统名与领域词替换为占位，落盘前零残留扫描命中即拒写）。仍保留通用 UI 文案与控件结构供 LLM 推选择器，但真实系统名、菜单名和弹窗业务文案不入库；`--llm` 跑评测时送出去的也是这些样本 |
 | `perception` 采集 | 元素清单（`text/attrs/constraints/html`） | `value` 在页面内 JS 里就换成 `[REDACTED]`（`collector.py`）；元素可见文本和上述 `text` 字段一样，出境前由 `sanitize_structure` 兜一层，但 raw 清单本身仍带可见文本，落盘会存原文 |
 
 ### 脱敏做什么
@@ -360,6 +360,8 @@ CI 默认路径 0 成本；报告数字与代码口径冲突时以重跑为准�
   清单摘要走 `sanitize_structure` 也是对同一套规则，所以这类只靠 `value` / `class` / 字段名前缀覆盖，
   漏了就漏了，宁可漏也不乱猜；表格样例行是唯一例外 —— 那里按“格子就是数据”整格抹除，不猜；
 - 只认**带 PII 提示的 class/id/name**：`<span class="col-3">张三</span>` 这类无名提示的字段照样漏；
+- 业务文案擦除是**系统名正则 + 领域词表**（`collect_golden._BUSINESS_WORDS`），不是语义识别：
+  出现未收录的新业务词时仍可能入 golden，需要补词表；
 - 不处理**图片**：截图见上表；
 - 不做**去标识化关联**：抹掉的是值本身，不是把它换成稳定假名，所以“同一患者”在两次调用间不可追踪。
 
